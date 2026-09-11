@@ -27,6 +27,20 @@ export function resolveClaudeCodeCliPath(): string | null {
   return firstExecutable([process.env.CLAUDE_CODE_PATH, join(home, ".local", "bin", "claude"), join(home, ".claude", "local", "claude"), ...pathCandidates("claude"), "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]);
 }
 
+export function resolveVCoderCliPath(): string | null {
+  const home = homedir();
+  return firstExecutable([process.env.SAND_VCODER_CLI_PATH, process.env.VCODER_CLI_PATH, join(home, ".local", "bin", "vcoder"), ...pathCandidates("vcoder"), "/opt/homebrew/bin/vcoder", "/usr/local/bin/vcoder"]);
+}
+
+export function readVCoderSettingsEnv(): Record<string, string> {
+  try {
+    const parsed = JSON.parse(readFileSync(join(homedir(), ".vcoder", "settings.json"), "utf8")) as Record<string, any>;
+    const env = parsed?.env;
+    if (typeof env !== "object" || env == null || Array.isArray(env)) return {};
+    return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0));
+  } catch { return {}; }
+}
+
 function hasUsableCodexLogin(path: string): boolean {
   try {
     const stat = lstatSync(path);
@@ -40,10 +54,11 @@ function hasUsableCodexLogin(path: string): boolean {
   } catch { return false; }
 }
 
-export function getLocalInferenceCliStatus(): { readonly codex: LocalInferenceCliStatus; readonly "claude-code": LocalInferenceCliStatus } {
+export function getLocalInferenceCliStatus(): { readonly codex: LocalInferenceCliStatus; readonly "claude-code": LocalInferenceCliStatus; readonly vcoder: LocalInferenceCliStatus } {
   const home = homedir();
   const codexPath = resolveCodexCliPath();
   const claudePath = resolveClaudeCodeCliPath();
+  const vcoderPath = resolveVCoderCliPath();
   const codexAuthPath = join(process.env.CODEX_HOME?.trim() || join(home, ".codex"), "auth.json");
   const hasCodexAuthFile = existsSync(codexAuthPath);
   const hasCodexLogin = hasUsableCodexLogin(codexAuthPath);
@@ -52,5 +67,8 @@ export function getLocalInferenceCliStatus(): { readonly codex: LocalInferenceCl
     // existing Codex login. The CLI binary is not in the request path.
     codex: { installed: hasCodexAuthFile, authenticated: hasCodexLogin, executablePath: codexPath },
     "claude-code": { installed: claudePath != null, authenticated: existsSync(join(home, ".claude", ".credentials.json")) || (process.env.ANTHROPIC_API_KEY?.length ?? 0) > 0, executablePath: claudePath },
+    // VCoder's print/SDK mode does not load the settings.json env block, so any
+    // credential stored there counts as configured and is injected at spawn time.
+    vcoder: { installed: vcoderPath != null, authenticated: Object.keys(readVCoderSettingsEnv()).length > 0, executablePath: vcoderPath },
   };
 }

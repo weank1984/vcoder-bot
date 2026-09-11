@@ -87,6 +87,7 @@ Open **Settings → Router** to choose the backend used for new turns:
 | Cursor | Existing Grok Bot/Cursor session | Native Grok Bot tools and plugins |
 | Claude Code | Existing Claude Code login | Routed Grok Bot MCP tools |
 | Codex | Existing local ChatGPT/Codex login | Direct Responses transport with Grok Bot tools |
+| VCoder | Existing local VCoder CLI sign-in | Routed Grok Bot MCP tools |
 | OpenRouter | API key saved through the desktop secrets bridge | Grok Bot tool-execution loop |
 
 Cursor is the default. Claude Code and Codex do not require separate API keys

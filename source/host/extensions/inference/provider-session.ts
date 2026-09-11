@@ -1,4 +1,4 @@
-import { lstatSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -8,7 +8,7 @@ import { jsonSchema, streamText, tool, type CoreMessage, type LanguageModelV1, t
 
 import { BasePromptBuilder, BasePromptExecutor } from "../../../packages/chat-inference/base.js";
 import type { SandInferenceProvider } from "../../../shared/inference-router.js";
-import { resolveClaudeCodeCliPath } from "../../../shared/node/inference-router-local.js";
+import { resolveClaudeCodeCliPath, resolveVCoderCliPath, readVCoderSettingsEnv } from "../../../shared/node/inference-router-local.js";
 import { getSandRootDir } from "../../host-paths.js";
 import { SandSettingsStore } from "../../../shared/node/settings/sand-settings-store.js";
 import { getBoxSecretsStorePath } from "../secrets/secrets-service.js";
@@ -227,6 +227,67 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
   return { fullStream, response: resultResponse.promise, usage: usage.promise, extendedUsage: extendedUsage.promise, providerMetadata: metadata.promise, invocationId: Promise.resolve(invocationId) };
 }
 
+// VCoder's CLI speaks the Claude Agent SDK wire protocol (stream-json in/out),
+// so the transport mirrors claudeExecutor. Differences: the SDK-mode CLI does
+// not load ~/.vcoder/settings.json's env block, so credentials stored there are
+// injected explicitly; the CLI reports provider failures as a success-shaped
+// result whose text carries the error, exiting non-zero; and because Grok Bot
+// has no approval surface for the CLI subprocess, VCoder runs with its own
+// built-in tools enabled under bypassPermissions so multi-turn agent loops
+// (write/run/debug) actually complete.
+function vcoderResultError(text: string): string | null {
+  const trimmed = text.trim();
+  return /^API Error:/.test(trimmed) || /provider requires authentication/.test(trimmed) ? trimmed : null;
+}
+
+// When the local Docker VM is selected, the connector stages a Linux VCoder
+// CLI inside the container and emits this wrapper, which pipes the Agent SDK's
+// stdio stream-json through `docker exec` — so VCoder's tools (Bash, file
+// writes, builds) act on the box filesystem instead of the host Mac.
+function vcoderBoxWrapperPath(): string | null {
+  try {
+    if (new SandSettingsStore(join(getSandRootDir(), "settings.json")).getBoxRuntime() !== "local-docker") return null;
+  } catch { return null; }
+  const candidate = join(getSandRootDir(), "local-docker-runtime", "vcoder-box-exec.sh");
+  return existsSync(candidate) ? candidate : null;
+}
+
+function vcoderExecutor(messages: readonly ProviderMessage[], invocationId: string, onUsage?: (usage: UsageRecord) => void, mcpServerUrl?: string) {
+  const inBox = vcoderBoxWrapperPath();
+  const executable = inBox ?? resolveVCoderCliPath();
+  if (executable == null) throw new Error("VCoder is not installed. Install VCoder and sign in, then reopen Grok Bot.");
+  const usage = deferred<{ promptTokens: number; completionTokens: number; totalTokens: number }>();
+  const extendedUsage = deferred<{ inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; maxTokens: number }>();
+  const resultResponse = deferred<ReturnType<typeof response>>();
+  const metadata = deferred<Record<string, unknown>>();
+  const fullStream = (async function* () {
+    let final: SDKResultMessage | undefined;
+    try {
+      const selectedModel = process.env.SAND_VCODER_MODEL?.trim();
+      for await (const message of queryClaude({ prompt: providerPrompt(messages), options: { pathToClaudeCodeExecutable: executable, cwd: getSandRootDir(), env: { ...process.env, ...readVCoderSettingsEnv() }, ...(mcpServerUrl == null ? {} : { mcpServers: { grok_bot_plugins: { type: "http" as const, url: mcpServerUrl } }, strictMcpConfig: true }), permissionMode: "bypassPermissions", maxTurns: 16, persistSession: false, ...(selectedModel == null || selectedModel.length === 0 ? {} : { model: selectedModel }) } })) if (message.type === "result") final = message;
+    } catch (error) {
+      const reported = final != null && final.subtype === "success" ? vcoderResultError(final.result) : null;
+      const failure = reported == null ? error : new Error(reported);
+      usage.reject(failure); extendedUsage.reject(failure); metadata.reject(failure); resultResponse.reject(failure); throw failure;
+    }
+    try {
+      if (final == null) throw new Error("VCoder ended without a result.");
+      if (final.subtype !== "success") throw new Error(final.errors.join("\n") || `VCoder failed (${final.subtype}).`);
+      const text = final.result;
+      const reported = vcoderResultError(text);
+      if (reported != null) throw new Error(reported);
+      if (text.length > 0) yield { type: "text-delta" as const, textDelta: text };
+      const input = final.usage.input_tokens, output = final.usage.output_tokens, cacheRead = final.usage.cache_read_input_tokens ?? 0, cacheWrite = final.usage.cache_creation_input_tokens ?? 0;
+      onUsage?.({ inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite });
+      usage.resolve({ promptTokens: input, completionTokens: output, totalTokens: input + output });
+      extendedUsage.resolve({ inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite, maxTokens: 0 });
+      metadata.resolve({ anthropic: { sessionId: final.session_id, totalCostUsd: final.total_cost_usd } });
+      resultResponse.resolve(response(text, invocationId, "vcoder"));
+    } catch (error) { usage.reject(error); extendedUsage.reject(error); metadata.reject(error); resultResponse.reject(error); throw error; }
+  })();
+  return { fullStream, response: resultResponse.promise, usage: usage.promise, extendedUsage: extendedUsage.promise, providerMetadata: metadata.promise, invocationId: Promise.resolve(invocationId) };
+}
+
 function toToolSet(definitions: readonly Loose[] | undefined, executeTool?: RoutedToolExecutor): ToolSet | undefined {
   if (definitions == null || definitions.length === 0) return undefined;
   const tools: ToolSet = {};
@@ -259,12 +320,13 @@ class ProviderPromptExecutor extends BasePromptExecutor<ProviderMessage> {
   stream(_ctx: unknown, invocationId = crypto.randomUUID(), definitions?: readonly Loose[]) {
     if (this.provider === "codex") return codexExecutor(this.getMessages(), invocationId, definitions, undefined, this.onUsage);
     if (this.provider === "claude-code") return claudeExecutor(this.getMessages(), invocationId, this.onUsage);
+    if (this.provider === "vcoder") return vcoderExecutor(this.getMessages(), invocationId, this.onUsage);
     return openRouterExecutor(this.getMessages(), invocationId, definitions, undefined, this.onUsage);
   }
 }
 
 export function createProviderPromptSession(provider: RoutedProvider): { getModelId(): string; getExecutor(state?: unknown): PromptExecutor } {
-  const modelId = provider === "codex" ? configuredCodexModel() : provider === "claude-code" ? "claude-code" : process.env.SAND_OPENROUTER_MODEL?.trim() || "openai/gpt-5.2";
+  const modelId = provider === "codex" ? configuredCodexModel() : provider === "claude-code" ? "claude-code" : provider === "vcoder" ? "vcoder" : process.env.SAND_OPENROUTER_MODEL?.trim() || "openai/gpt-5.2";
   return { getModelId: () => modelId, getExecutor: state => new ProviderPromptExecutor(provider, Array.isArray(state) ? state as ProviderMessage[] : undefined, usage => recordRoutedUsage(provider, usage)) };
 }
 
@@ -280,7 +342,9 @@ export async function runRoutedProviderText(provider: RoutedProvider, messages: 
     ? codexExecutor(messages, invocationId, options?.tools, options?.executeTool, onUsage)
     : provider === "claude-code"
       ? claudeExecutor(messages, invocationId, onUsage, options?.mcpServerUrl)
-      : openRouterExecutor(messages, invocationId, options?.tools, options?.executeTool, onUsage);
+      : provider === "vcoder"
+        ? vcoderExecutor(messages, invocationId, onUsage, options?.mcpServerUrl)
+        : openRouterExecutor(messages, invocationId, options?.tools, options?.executeTool, onUsage);
   let text = "";
   for await (const event of result.fullStream) {
     if (event.type === "text-delta" && typeof event.textDelta === "string") {

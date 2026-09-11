@@ -59,6 +59,10 @@ const LOGIN_DID_NOT_FINISH_STATUS = { kind: "logged-out", errorMessage: "Cursor 
 const ACCOUNT_REFUSED_STATUS = { kind: "logged-out", errorMessage: "This computer is linked to another Cursor account. Sign in with that account to continue." } as const;
 const ACCOUNT_REFUSED_CREDENTIALS_RETAINED_STATUS = { kind: "logged-out", errorMessage: "This computer is linked to another Cursor account. Grok Bot couldn't remove the saved Cursor sign-in, so the account may return after restart. Sign in with the linked account to continue." } as const;
 
+export const SAND_ROUTER_BYPASS_LOGIN_ENV = "SAND_ROUTER_BYPASS_LOGIN";
+const ROUTER_BYPASS_STATUS: SandAuthStatus = { kind: "logged-in", authId: "router-local", email: "router@local" };
+export function isRouterLoginBypassed(env: NodeJS.ProcessEnv = process.env): boolean { return env[SAND_ROUTER_BYPASS_LOGIN_ENV] === "1"; }
+
 function base64UrlEncode(bytes: Uint8Array): string { return Buffer.from(bytes).toString("base64url"); }
 export function createLoginMetadata(): { challenge: string; metadata: LoginMetadata } {
   const verifier = base64UrlEncode(randomBytes(32));
@@ -236,6 +240,7 @@ export class SandCursorAuthService {
   subscribe(listener: (status: SandAuthStatus) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
 
   async getStatus(): Promise<SandAuthStatus> {
+    if (isRouterLoginBypassed()) return ROUTER_BYPASS_STATUS;
     const operationEpoch = this.authOperationEpoch;
     if (this.credentialsRetainedAfterFailedLogout) return RETAINED_AFTER_FAILED_LOGOUT_STATUS;
     if (this.credentialsRevoked) return this.reportedLoggedOutStatus;

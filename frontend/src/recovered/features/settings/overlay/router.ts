@@ -1,6 +1,6 @@
 import type { AgentDesktopBridge } from "../../../contracts/desktop-bridge";
 
-export type RouterProviderId = "cursor" | "claude-code" | "codex" | "openrouter";
+export type RouterProviderId = "cursor" | "claude-code" | "codex" | "openrouter" | "vcoder";
 
 export interface RouterProvider {
   readonly id: RouterProviderId;
@@ -33,6 +33,13 @@ export const ROUTER_PROVIDERS: readonly RouterProvider[] = [
     label: "Codex",
     description: "Use OpenAI's Codex provider for agent requests.",
     usageDescription: "Codex usage is managed by your OpenAI account and is not exposed as an in-app meter.",
+    usageSource: "external"
+  },
+  {
+    id: "vcoder",
+    label: "VCoder",
+    description: "Use your local VCoder CLI sign-in and agent engine for requests.",
+    usageDescription: "VCoder usage is managed by your VCoder provider account and is not exposed as an in-app meter.",
     usageSource: "external"
   },
   {

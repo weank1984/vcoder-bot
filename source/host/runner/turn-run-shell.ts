@@ -185,7 +185,12 @@ export async function createTurnAgentRunContext<ContextValue>(
   const inferenceProvider = new SandSettingsStore(join(getSandRootDir(), "settings.json")).getInferenceProvider();
   const agent = inferenceProvider === "cursor"
     ? input.inference.createSession(input.onRequestId, sessionOptions)
-    : createProviderPromptSession(inferenceProvider) as unknown as TurnAgentPromptSession;
+    // Provider CLIs stream their thinking and internally-executed tool calls
+    // as display-only activity (streamActivity), and answer in plain assistant
+    // text, which the chat never renders; deliverFinalText lets the provider
+    // executor route the final reply through a real SendMessage call. Subagent
+    // and silence-allowed (e.g. quiet routine) turns keep the text internal.
+    : createProviderPromptSession(inferenceProvider, { streamActivity: true, deliverFinalText: !input.isSubagentRunner && !input.isSilenceAllowed }) as unknown as TurnAgentPromptSession;
   const summarizationSession = inferenceProvider === "cursor" ? input.inference.createSummarizationSession?.(
     input.onRequestId,
     {
@@ -704,6 +709,7 @@ export function createTurnRunShell(host: TurnRunShellHost) {
         prepared.baseState,
         prepared.transcriptPersistenceEnabled,
       );
+      await settle.recoverTranscriptJournal(context, prepared.baseState);
 
       if (controller.signal.aborted) {
         throw new SandTurnInterruptedBeforeDispatchError();

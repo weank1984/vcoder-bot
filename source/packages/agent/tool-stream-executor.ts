@@ -63,7 +63,12 @@ type StreamChunk =
   | { readonly type: "reasoning-signature"; readonly signature: string }
   | { readonly type: "tool-call-streaming-start"; readonly toolCallId: string; readonly toolName: string }
   | { readonly type: "tool-call-delta"; readonly toolCallId: string; readonly toolName: string; readonly argsTextDelta: string }
-  | { readonly type: "tool-call"; readonly toolCallId: string; readonly toolName: string; readonly args: unknown };
+  | { readonly type: "tool-call"; readonly toolCallId: string; readonly toolName: string; readonly args: unknown }
+  // Display-only tool activity reported by an external agent process (e.g. a
+  // CLI provider whose tools execute internally). Never routed into tool
+  // execution: the collection below has no branch for it, and only
+  // InteractionHandler.consumeStream turns it into UI updates.
+  | { readonly type: "tool-activity"; readonly toolCallId: string; readonly toolName: string; readonly phase: "started" | "completed"; readonly detail?: string; readonly target?: string; readonly isError?: boolean };
 
 type AssistantContentPart =
   | { type: "text"; text: string }

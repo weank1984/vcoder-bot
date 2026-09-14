@@ -10,6 +10,7 @@ import { BasePromptBuilder, BasePromptExecutor } from "../../../packages/chat-in
 import type { SandInferenceProvider } from "../../../shared/inference-router.js";
 import { resolveClaudeCodeCliPath, resolveVCoderCliPath, readVCoderSettingsEnv } from "../../../shared/node/inference-router-local.js";
 import { getSandRootDir } from "../../host-paths.js";
+import { SAND_SEND_MESSAGE_TOOL_NAME } from "../../runner/send-message-reminder-middleware.js";
 import { SandSettingsStore } from "../../../shared/node/settings/sand-settings-store.js";
 import { getBoxSecretsStorePath } from "../secrets/secrets-service.js";
 import { streamCodexDirectResponses, type CodexDirectTool } from "./codex-direct-responses.js";
@@ -235,6 +236,19 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
 // has no approval surface for the CLI subprocess, VCoder runs with its own
 // built-in tools enabled under bypassPermissions so multi-turn agent loops
 // (write/run/debug) actually complete.
+//
+// Stream mapping for UI visibility: the CLI's tools (Bash/Write/...) execute
+// inside the CLI process, so they must never enter Grok Bot's tool execution —
+// executeToolStream would look them up in the Grok Bot toolset and inject the
+// result back into the model loop. Instead the executor reports them as
+// display-only "tool-activity" chunks (handled by InteractionHandler.consumeStream),
+// thinking blocks as reasoning chunks, and assistant text as live text-delta
+// chunks. Grok Bot's chat only renders SendMessage tool calls as user-visible
+// replies, so when deliverFinalText is set the final result text is also
+// yielded as one synthesized SendMessage tool call: the runner's real
+// SendMessage tool delivers it, and because the resolved response messages
+// stay text-only the tool result is filtered out of the model loop
+// (isValidToolResult) and the turn ends after one stream.
 function vcoderResultError(text: string): string | null {
   const trimmed = text.trim();
   return /^API Error:/.test(trimmed) || /provider requires authentication/.test(trimmed) ? trimmed : null;
@@ -248,30 +262,113 @@ function isRunningInsideSandBox(): boolean {
   return process.env.SAND_SUPERVISOR_ENABLED === "1";
 }
 
-function vcoderExecutor(messages: readonly ProviderMessage[], invocationId: string, onUsage?: (usage: UsageRecord) => void, mcpServerUrl?: string) {
+const VCODER_TOOL_ACTIVITY_TEXT_MAX_CHARS = 200;
+
+function clampVcoderActivityText(text: string): string | undefined {
+  const collapsed = text.replace(/\s+/g, " ").trim();
+  if (collapsed.length === 0) return undefined;
+  return collapsed.length > VCODER_TOOL_ACTIVITY_TEXT_MAX_CHARS
+    ? `${collapsed.slice(0, VCODER_TOOL_ACTIVITY_TEXT_MAX_CHARS)}…`
+    : collapsed;
+}
+
+function vcoderToolActivityDetail(input: unknown): string | undefined {
+  if (input == null || typeof input !== "object" || Array.isArray(input)) return undefined;
+  const record = input as Loose;
+  const candidate = record.command ?? record.file_path ?? record.path ?? record.pattern ?? record.url ?? record.query ?? record.description ?? record.prompt;
+  if (typeof candidate === "string") return clampVcoderActivityText(candidate);
+  try {
+    return clampVcoderActivityText(JSON.stringify(input));
+  } catch { return undefined; }
+}
+
+function vcoderToolResultPreview(content: unknown): string | undefined {
+  const text = typeof content === "string"
+    ? content
+    : Array.isArray(content)
+      ? content.map(block => typeof (block as Loose)?.text === "string" ? (block as Loose).text as string : "").join("")
+      : "";
+  return clampVcoderActivityText(text);
+}
+
+function vcoderMessageContentBlocks(message: Loose): readonly Loose[] {
+  const content = message?.message?.content;
+  return Array.isArray(content) ? content as readonly Loose[] : [];
+}
+
+function vcoderExecutor(messages: readonly ProviderMessage[], invocationId: string, onUsage?: (usage: UsageRecord) => void, mcpServerUrl?: string, options?: { readonly streamActivity?: boolean; readonly deliverFinalText?: boolean }) {
   const executable = resolveVCoderCliPath();
   if (executable == null) throw new Error("VCoder is not installed. Install VCoder and sign in, then reopen Grok Bot.");
+  const streamActivity = options?.streamActivity === true;
   const usage = deferred<{ promptTokens: number; completionTokens: number; totalTokens: number }>();
   const extendedUsage = deferred<{ inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; maxTokens: number }>();
   const resultResponse = deferred<ReturnType<typeof response>>();
   const metadata = deferred<Record<string, unknown>>();
   const fullStream = (async function* () {
     let final: SDKResultMessage | undefined;
+    let streamedText = "";
+    const pendingActivities = new Map<string, string>();
+    const completeActivity = (toolCallId: string, isError: boolean, detail?: string) => {
+      const toolName = pendingActivities.get(toolCallId) ?? "tool";
+      pendingActivities.delete(toolCallId);
+      return {
+        type: "tool-activity" as const,
+        toolCallId,
+        toolName,
+        phase: "completed" as const,
+        ...(isError ? { isError: true } : {}),
+        ...(detail == null ? {} : { detail }),
+      };
+    };
     try {
       const selectedModel = process.env.SAND_VCODER_MODEL?.trim();
-      for await (const message of queryClaude({ prompt: providerPrompt(messages), options: { pathToClaudeCodeExecutable: executable, cwd: isRunningInsideSandBox() ? "/workspace" : getSandRootDir(), env: { ...process.env, ...readVCoderSettingsEnv() }, ...(mcpServerUrl == null ? {} : { mcpServers: { grok_bot_plugins: { type: "http" as const, url: mcpServerUrl } }, strictMcpConfig: true }), permissionMode: "bypassPermissions", maxTurns: 16, persistSession: false, ...(selectedModel == null || selectedModel.length === 0 ? {} : { model: selectedModel }) } })) if (message.type === "result") final = message;
+      for await (const message of queryClaude({ prompt: providerPrompt(messages), options: { pathToClaudeCodeExecutable: executable, cwd: isRunningInsideSandBox() ? "/workspace" : getSandRootDir(), env: { ...process.env, ...readVCoderSettingsEnv(), ...(isRunningInsideSandBox() ? { IS_SANDBOX: "1" } : {}) }, ...(mcpServerUrl == null ? {} : { mcpServers: { grok_bot_plugins: { type: "http" as const, url: mcpServerUrl } }, strictMcpConfig: true }), permissionMode: "bypassPermissions", maxTurns: 16, persistSession: false, ...(selectedModel == null || selectedModel.length === 0 ? {} : { model: selectedModel }) } })) {
+        if (message.type === "assistant") {
+          if (!streamActivity) continue;
+          for (const block of vcoderMessageContentBlocks(message)) {
+            if (block.type === "thinking" && typeof block.thinking === "string" && block.thinking.length > 0) {
+              yield { type: "reasoning" as const, textDelta: block.thinking };
+            } else if (block.type === "text" && typeof block.text === "string" && block.text.length > 0) {
+              streamedText += block.text;
+              yield { type: "text-delta" as const, textDelta: block.text };
+            } else if (block.type === "tool_use" && typeof block.id === "string" && block.id.length > 0 && typeof block.name === "string" && block.name.length > 0) {
+              pendingActivities.set(block.id, block.name);
+              const detail = vcoderToolActivityDetail(block.input);
+              yield { type: "tool-activity" as const, toolCallId: block.id, toolName: block.name, phase: "started" as const, ...(detail == null ? {} : { detail }) };
+            }
+          }
+          continue;
+        }
+        if (message.type === "user") {
+          if (!streamActivity) continue;
+          for (const block of vcoderMessageContentBlocks(message)) {
+            if (block.type !== "tool_result" || typeof block.tool_use_id !== "string" || !pendingActivities.has(block.tool_use_id)) continue;
+            yield completeActivity(block.tool_use_id, block.is_error === true, vcoderToolResultPreview(block.content));
+          }
+          continue;
+        }
+        if (message.type === "result") final = message;
+      }
     } catch (error) {
+      for (const toolCallId of [...pendingActivities.keys()]) yield completeActivity(toolCallId, true);
       const reported = final != null && final.subtype === "success" ? vcoderResultError(final.result) : null;
       const failure = reported == null ? error : new Error(reported);
       usage.reject(failure); extendedUsage.reject(failure); metadata.reject(failure); resultResponse.reject(failure); throw failure;
     }
     try {
+      for (const toolCallId of [...pendingActivities.keys()]) yield completeActivity(toolCallId, false);
       if (final == null) throw new Error("VCoder ended without a result.");
       if (final.subtype !== "success") throw new Error(final.errors.join("\n") || `VCoder failed (${final.subtype}).`);
       const text = final.result;
       const reported = vcoderResultError(text);
       if (reported != null) throw new Error(reported);
-      if (text.length > 0) yield { type: "text-delta" as const, textDelta: text };
+      const remainder = text.startsWith(streamedText)
+        ? text.slice(streamedText.length)
+        : streamedText.length === 0 ? text : "";
+      if (remainder.length > 0) yield { type: "text-delta" as const, textDelta: remainder };
+      if (options?.deliverFinalText === true && text.trim().length > 0) {
+        yield { type: "tool-call" as const, toolCallId: `${invocationId}-vcoder-send-message`, toolName: SAND_SEND_MESSAGE_TOOL_NAME, args: { type: "text", content: text } };
+      }
       const input = final.usage.input_tokens, output = final.usage.output_tokens, cacheRead = final.usage.cache_read_input_tokens ?? 0, cacheWrite = final.usage.cache_creation_input_tokens ?? 0;
       onUsage?.({ inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite });
       usage.resolve({ promptTokens: input, completionTokens: output, totalTokens: input + output });
@@ -311,18 +408,18 @@ function openRouterExecutor(messages: readonly ProviderMessage[], invocationId: 
 }
 
 class ProviderPromptExecutor extends BasePromptExecutor<ProviderMessage> {
-  constructor(readonly provider: RoutedProvider, initialMessages?: readonly ProviderMessage[], readonly onUsage?: (usage: UsageRecord) => void) { super(new BasePromptBuilder(initialMessages)); }
+  constructor(readonly provider: RoutedProvider, initialMessages?: readonly ProviderMessage[], readonly onUsage?: (usage: UsageRecord) => void, readonly streamActivity = false, readonly deliverFinalText = false) { super(new BasePromptBuilder(initialMessages)); }
   stream(_ctx: unknown, invocationId = crypto.randomUUID(), definitions?: readonly Loose[]) {
     if (this.provider === "codex") return codexExecutor(this.getMessages(), invocationId, definitions, undefined, this.onUsage);
     if (this.provider === "claude-code") return claudeExecutor(this.getMessages(), invocationId, this.onUsage);
-    if (this.provider === "vcoder") return vcoderExecutor(this.getMessages(), invocationId, this.onUsage);
+    if (this.provider === "vcoder") return vcoderExecutor(this.getMessages(), invocationId, this.onUsage, undefined, { streamActivity: this.streamActivity, deliverFinalText: this.deliverFinalText });
     return openRouterExecutor(this.getMessages(), invocationId, definitions, undefined, this.onUsage);
   }
 }
 
-export function createProviderPromptSession(provider: RoutedProvider): { getModelId(): string; getExecutor(state?: unknown): PromptExecutor } {
+export function createProviderPromptSession(provider: RoutedProvider, options?: { readonly streamActivity?: boolean; readonly deliverFinalText?: boolean }): { getModelId(): string; getExecutor(state?: unknown): PromptExecutor } {
   const modelId = provider === "codex" ? configuredCodexModel() : provider === "claude-code" ? "claude-code" : provider === "vcoder" ? "vcoder" : process.env.SAND_OPENROUTER_MODEL?.trim() || "openai/gpt-5.2";
-  return { getModelId: () => modelId, getExecutor: state => new ProviderPromptExecutor(provider, Array.isArray(state) ? state as ProviderMessage[] : undefined, usage => recordRoutedUsage(provider, usage)) };
+  return { getModelId: () => modelId, getExecutor: state => new ProviderPromptExecutor(provider, Array.isArray(state) ? state as ProviderMessage[] : undefined, usage => recordRoutedUsage(provider, usage), options?.streamActivity === true, options?.deliverFinalText === true) };
 }
 
 export async function runRoutedProviderText(provider: RoutedProvider, messages: readonly ProviderMessage[], options?: {

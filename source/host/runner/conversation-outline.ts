@@ -52,6 +52,55 @@ interface SendMessageToolCall {
   };
 }
 
+// Display-only tool activity reported by an external agent process rides the
+// communicateUpdateToolCall carrier with a `__sand_tool__` payload whose phase
+// is "activity" (real Communicate-tool executions use phase "executing" at
+// start and carry only result/error on completion, so they never match this).
+interface SandToolActivityStep {
+  readonly tool: string;
+  readonly detail?: string;
+  readonly target?: string;
+  readonly result?: string;
+  readonly error?: string;
+}
+
+function readSandToolActivityStep(toolCall: OutlineToolCall): SandToolActivityStep | null {
+  if (toolCall.tool.case !== "communicateUpdateToolCall") return null;
+  const value = toolCall.tool.value as { readonly args?: JsonArguments } | undefined;
+  const args = value?.args;
+  if (args == null || typeof args.toJson !== "function") return null;
+  let serialized: unknown;
+  try {
+    serialized = args.toJson();
+  } catch {
+    return null;
+  }
+  const currentStep = (serialized as { readonly currentStep?: unknown } | null)?.currentStep;
+  if (typeof currentStep !== "string") return null;
+  let payload: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(currentStep);
+    if (typeof parsed !== "object" || parsed == null || Array.isArray(parsed)) return null;
+    payload = parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  if (payload.__sand_tool__ !== true || payload.phase !== "activity") return null;
+  if (typeof payload.tool !== "string" || payload.tool.length === 0) return null;
+  const text = (key: "detail" | "target" | "result" | "error"): string | undefined => {
+    const field = payload[key];
+    return typeof field === "string" && field.length > 0 ? field : undefined;
+  };
+  const detail = text("detail"), target = text("target"), result = text("result"), error = text("error");
+  return {
+    tool: payload.tool,
+    ...(detail === undefined ? {} : { detail }),
+    ...(target === undefined ? {} : { target }),
+    ...(result === undefined ? {} : { result }),
+    ...(error === undefined ? {} : { error }),
+  };
+}
+
 export interface OutlineToolCall {
   readonly tool: {
     readonly case?: string;
@@ -102,6 +151,8 @@ export function stripHiddenMarker(text: string): string {
 
 export function getOutlineToolCallName(toolCall: OutlineToolCall): string {
   if (toolCall.tool.case === "taskToolCall") return "Task";
+  const activity = readSandToolActivityStep(toolCall);
+  if (activity != null) return activity.tool;
   if (toolCall.tool.case === "computerUseToolCall") {
     const value = toolCall.tool.value as ComputerUseToolCall | undefined;
     const actions = value?.args?.actions;
@@ -125,9 +176,12 @@ export function getTaskSummary(taskToolCall: TaskToolCall): string | undefined {
 }
 
 export function getOutlineToolCallSummary(toolCall: OutlineToolCall): string | undefined {
-  return toolCall.tool.case === "taskToolCall"
-    ? getTaskSummary(toolCall.tool.value as TaskToolCall)
-    : undefined;
+  if (toolCall.tool.case === "taskToolCall") {
+    return getTaskSummary(toolCall.tool.value as TaskToolCall);
+  }
+  const activity = readSandToolActivityStep(toolCall);
+  if (activity != null) return activity.detail ?? activity.result ?? activity.error;
+  return undefined;
 }
 
 export function getToolCallActivityArgs(toolCall: OutlineToolCall): string | undefined {

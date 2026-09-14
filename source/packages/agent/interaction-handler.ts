@@ -4,6 +4,13 @@ import { Updates } from "../agent-core/interaction-updates.js";
 import { InputTokenLimitError } from "../chat-inference/prompt-executor.js";
 import { EditArgs } from "../proto/generated/agent/v1/edit_tool_pb.js";
 import { ToolCall } from "../proto/generated/agent/v1/agent_pb.js";
+import {
+  CommunicateUpdateArgs,
+  CommunicateUpdateError,
+  CommunicateUpdateResult,
+  CommunicateUpdateSuccess,
+  CommunicateUpdateToolCall,
+} from "../proto/generated/agent/v1/communicate_update_tool_pb.js";
 import { PrivacyMode } from "../proto/generated/aiserver/v1/privacy_mode_pb.js";
 import { toRedactedToolCall } from "../redacted-protos/generated/agent/v1/agent_redacted.js";
 import { ToolCallAbortedError } from "./tools/common.js";
@@ -22,6 +29,60 @@ function requireGeneratedToolCall(value: unknown): ToolCall {
 
 const logger = createLogger("interaction-handler");
 const THINKING_RELATED_CHUNK_TYPES = ["reasoning", "reasoning-signature", "redacted-reasoning"];
+
+// Display-only tool activity (StreamChunk "tool-activity") rides the generic
+// communicateUpdateToolCall carrier so redaction, persistence, and the
+// ForwardingInteractionListener pass it through unchanged. The `__sand_tool__`
+// payload marker is what host/sand-activity.ts already parses for the activity
+// line; phase "activity" lets the outline resolvers tell these reports apart
+// from real Communicate-tool executions. Nothing here ever enters tool
+// execution: this path only emits interaction updates and records the step.
+const TOOL_ACTIVITY_MARKER = "__sand_tool__";
+const TOOL_ACTIVITY_PHASE = "activity";
+
+function encodeToolActivityStep(payload: Record<string, unknown>): string {
+  return JSON.stringify({ [TOOL_ACTIVITY_MARKER]: true, phase: TOOL_ACTIVITY_PHASE, ...payload });
+}
+
+function toolActivityStartedToolCall(chunk: Loose): ToolCall {
+  return new ToolCall({
+    tool: {
+      case: "communicateUpdateToolCall",
+      value: new CommunicateUpdateToolCall({
+        args: new CommunicateUpdateArgs({
+          currentStep: encodeToolActivityStep({
+            tool: chunk.toolName,
+            ...(typeof chunk.detail === "string" && chunk.detail.length > 0 ? { detail: chunk.detail } : {}),
+            ...(typeof chunk.target === "string" && chunk.target.length > 0 ? { target: chunk.target } : {}),
+          }),
+        }),
+      }),
+    },
+  });
+}
+
+function toolActivityCompletedToolCall(chunk: Loose): ToolCall {
+  const isError = chunk.isError === true;
+  const text = typeof chunk.detail === "string" ? chunk.detail : "";
+  const outcome = text.length > 0 ? text : isError ? "Tool failed." : "";
+  const args = new CommunicateUpdateArgs({
+    currentStep: encodeToolActivityStep({
+      tool: chunk.toolName,
+      ...(isError ? { error: outcome || "Tool failed." } : outcome.length > 0 ? { result: outcome } : {}),
+    }),
+  });
+  const result = new CommunicateUpdateResult({
+    result: isError
+      ? { case: "error", value: new CommunicateUpdateError({ error: outcome || "Tool failed." }) }
+      : { case: "success", value: new CommunicateUpdateSuccess({ currentStep: outcome }) },
+  });
+  return new ToolCall({
+    tool: {
+      case: "communicateUpdateToolCall",
+      value: new CommunicateUpdateToolCall({ args, result }),
+    },
+  });
+}
 const toolCallLatency = createHistogram("agent.tool_call.latency_ms", {
   description: "Latency of tool calls in milliseconds",
   labelNames: ["tool_name"],
@@ -222,6 +283,8 @@ export class InteractionHandler {
           await textHandler.recordThinking(ctx, delta);
         } else if (chunk.type === "tool-call-delta") {
           await this.emitTokenDeltaFromChars(ctx, chunk.argsTextDelta);
+        } else if (chunk.type === "tool-activity") {
+          await this.emitToolActivity(ctx, chunk);
         }
       }
     } catch (error) {
@@ -242,6 +305,21 @@ export class InteractionHandler {
     const toolCallWithId = this.withToolCallMetadata(callId, toolCall, undefined);
     this.rememberLatestToolCall(callId, toolCallWithId);
     await this.interactionProvider.sendUpdate(ctx, Updates.partialToolCall(callId, toolCallWithId, this.invocationId));
+  }
+
+  async emitToolActivity(ctx: Loose, chunk: Loose): Promise<void> {
+    if (chunk.phase === "completed") {
+      const startedAtMs = this.toolCallStartedAtMsByCallId.get(chunk.toolCallId);
+      this.toolCallStartedAtMsByCallId.delete(chunk.toolCallId);
+      const toolCall = this.withToolCallMetadata(chunk.toolCallId, toolActivityCompletedToolCall(chunk), { startedAtMs, completedAtMs: Date.now() });
+      await this.interactionProvider.sendUpdate(ctx, Updates.toolCallCompleted(chunk.toolCallId, toolCall, this.invocationId));
+      this.toolCallRecorder.recordToolCall(toRedactedToolCall(toolCall, PrivacyMode.UNSPECIFIED), chunk.toolCallId);
+      return;
+    }
+    const startedAtMs = Date.now();
+    this.toolCallStartedAtMsByCallId.set(chunk.toolCallId, startedAtMs);
+    const toolCall = this.withToolCallMetadata(chunk.toolCallId, toolActivityStartedToolCall(chunk), { startedAtMs });
+    await this.interactionProvider.sendUpdate(ctx, Updates.toolCallStarted(chunk.toolCallId, toolCall, this.invocationId));
   }
 
   async recordPendingToolCall(ctx: Loose, callId: string, toolCall: Loose): Promise<void> {

@@ -48,6 +48,12 @@ export interface TurnSettleHost {
       finalize: boolean,
       force: boolean,
     ): Promise<void>;
+    recover?(
+      context: unknown,
+      transcriptId: string,
+      checkpoint: TurnCheckpoint,
+      blobStore: unknown,
+    ): Promise<void>;
     abortCheckpoint(context: unknown, transcriptId: string): Promise<void>;
     commitCheckpoint(
       context: unknown,
@@ -192,6 +198,25 @@ export function createTurnSettle(
   ): void {
     observedSummaryArchiveCount = baseState.summaryArchives.length;
     transcriptPersistenceEnabled = enableTranscriptPersistence;
+  }
+
+  // The journal requires a recover against the durable (base) checkpoint before
+  // this process may prepare further checkpoints for a conversation. The shipped
+  // app never exercises this because the journal gate is off in production; with
+  // the gate on (or a pinned .journal-mode marker) the first checkpoint of a
+  // process would otherwise fail with "transcript checkpoint must recover before
+  // preparing". Idempotent per turn and safe to call once per turn.
+  async function recoverTranscriptJournal(
+    context: unknown,
+    baseState: TurnCheckpoint,
+  ): Promise<void> {
+    if (!transcriptPersistenceEnabled) return;
+    await host.transcriptMirror?.recover?.(
+      context,
+      host.getTranscriptId(),
+      baseState,
+      host.getBlobStore(),
+    );
   }
 
   function prepareCheckpointForPersistence(
@@ -407,6 +432,7 @@ export function createTurnSettle(
     setProfileSnapshot,
     noteProfileUpdateAppended,
     noteBaseState,
+    recoverTranscriptJournal,
     prepareCheckpointForPersistence,
     persistStepCheckpoint,
     settleCompletedTurn,

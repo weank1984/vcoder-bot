@@ -195,10 +195,15 @@ async function stageVCoderBoxCli(settingsPath: string): Promise<VCoderBoxCli | n
   let hostSettings: Record<string, unknown> = {};
   try { hostSettings = JSON.parse(await readFile(join(homedir(), ".vcoder", "settings.json"), "utf8")) as Record<string, unknown>; } catch {}
   const settingsTarget = join(directory, "settings.json");
-  const temporarySettings = `${settingsTarget}.${process.pid}.tmp`;
-  await writeFile(temporarySettings, `${JSON.stringify(hostSettings, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-  await rename(temporarySettings, settingsTarget);
-  await chmod(settingsTarget, 0o600);
+  // This file is single-file bind-mounted into the local VM, so it must be
+  // rewritten in place: an atomic rename would swap the inode and leave the
+  // container's mount dangling.
+  const settingsContent = `${JSON.stringify(hostSettings, null, 2)}\n`;
+  const existingSettings = await readFile(settingsTarget, "utf8").catch(() => null);
+  if (existingSettings !== settingsContent) {
+    await writeFile(settingsTarget, settingsContent, { encoding: "utf8", mode: 0o600 });
+    await chmod(settingsTarget, 0o600);
+  }
 
   return { cliPath, settingsPath: settingsTarget, sha256 };
 }

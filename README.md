@@ -95,6 +95,12 @@ when their local clients are already authenticated. The application preserves
 streaming responses, thinking state, reactions, rich plugin mentions, and MCP
 tool execution across routed conversations.
 
+When the local Docker sandbox is enabled, VCoder follows the original Grok Bot
+topology: the turn runs inside the box and the host spawns a staged Linux
+VCoder CLI there directly, so file and shell side effects land on the box
+filesystem. Point `SAND_VCODER_BOX_CLI_PATH` at a Linux (x64 baseline)
+`vcoder-cli` build to stage it.
+
 **Usage & Billing** shows the locally recorded request and token totals for
 providers that return usage data. These figures are activity records, not an
 authoritative provider invoice.

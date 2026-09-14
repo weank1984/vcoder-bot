@@ -59,6 +59,11 @@ export function createCoordinatorInferenceRouter(options: {
   const storePath = join(options.dataDir, "inference-router-transcript.json");
   const now = options.now ?? Date.now;
   const queues = new Map<string, Promise<unknown>>();
+  // VCoder with the local Docker VM follows the original Grok Bot topology: the
+  // turn runs inside the box host, which spawns the staged Linux CLI directly.
+  // The coordinator must not intercept those turns or merge the local router
+  // transcript store — the box owns the transcript exactly like Cursor mode.
+  const isBoxNativeProvider = (provider: SandInferenceProvider): boolean => provider === "vcoder" && settings.getBoxRuntime() === "local-docker";
 
   const load = async (): Promise<Store> => {
     try { return parseInferenceRouterTranscriptStore(JSON.parse(await readFile(storePath, "utf8"))); }
@@ -188,7 +193,7 @@ export function createCoordinatorInferenceRouter(options: {
     provider(): SandInferenceProvider { return settings.getInferenceProvider(); },
     async dispatch(method: string, args: unknown): Promise<{ handled: boolean; value?: unknown }> {
       const provider = settings.getInferenceProvider();
-      if (method === "reactToMessage") {
+      if (method === "reactToMessage" && !isBoxNativeProvider(provider)) {
         const record = asRecord(args) ?? {};
         const agentId = typeof record.agentId === "string" ? record.agentId : "";
         const entryId = typeof record.entryId === "string" ? record.entryId : "";
@@ -199,7 +204,7 @@ export function createCoordinatorInferenceRouter(options: {
           return { handled: true, value: undefined };
         }
       }
-      if (provider !== "cursor" && ["getAgentTranscriptTail", "openAgentTail", "getAgentTranscriptWindow"].includes(method)) {
+      if (provider !== "cursor" && !isBoxNativeProvider(provider) && ["getAgentTranscriptTail", "openAgentTail", "getAgentTranscriptWindow"].includes(method)) {
         const record = asRecord(args) ?? {};
         const agentId = typeof record.id === "string" ? record.id : "";
         const [remote, local] = await Promise.all([options.dispatchRemote(method, args), load()]);
@@ -209,7 +214,7 @@ export function createCoordinatorInferenceRouter(options: {
         const limit = typeof record.limit === "number" && Number.isInteger(record.limit) && record.limit > 0 ? record.limit : 500;
         return { handled: true, value: { ...result, entries: entries.slice(-limit) } };
       }
-      if (method !== "sendPrompt" || provider === "cursor") return { handled: false };
+      if (method !== "sendPrompt" || provider === "cursor" || isBoxNativeProvider(provider)) return { handled: false };
       const record = asRecord(args) ?? {};
       const agentId = typeof record.agentId === "string" ? record.agentId : "";
       const previous = queues.get(agentId) ?? Promise.resolve();

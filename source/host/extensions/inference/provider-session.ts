@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { lstatSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -240,21 +240,16 @@ function vcoderResultError(text: string): string | null {
   return /^API Error:/.test(trimmed) || /provider requires authentication/.test(trimmed) ? trimmed : null;
 }
 
-// When the local Docker VM is selected, the connector stages a Linux VCoder
-// CLI inside the container and emits this wrapper, which pipes the Agent SDK's
-// stdio stream-json through `docker exec` — so VCoder's tools (Bash, file
-// writes, builds) act on the box filesystem instead of the host Mac.
-function vcoderBoxWrapperPath(): string | null {
-  try {
-    if (new SandSettingsStore(join(getSandRootDir(), "settings.json")).getBoxRuntime() !== "local-docker") return null;
-  } catch { return null; }
-  const candidate = join(getSandRootDir(), "local-docker-runtime", "vcoder-box-exec.sh");
-  return existsSync(candidate) ? candidate : null;
+// Inside the local Docker VM (the original Grok Bot topology: the agent runs in
+// the box) the connector stages the Linux CLI at SAND_VCODER_CLI_PATH and the
+// model-visible workspace is /workspace, so file and Bash side effects land on
+// the box filesystem.
+function isRunningInsideSandBox(): boolean {
+  return process.env.SAND_SUPERVISOR_ENABLED === "1";
 }
 
 function vcoderExecutor(messages: readonly ProviderMessage[], invocationId: string, onUsage?: (usage: UsageRecord) => void, mcpServerUrl?: string) {
-  const inBox = vcoderBoxWrapperPath();
-  const executable = inBox ?? resolveVCoderCliPath();
+  const executable = resolveVCoderCliPath();
   if (executable == null) throw new Error("VCoder is not installed. Install VCoder and sign in, then reopen Grok Bot.");
   const usage = deferred<{ promptTokens: number; completionTokens: number; totalTokens: number }>();
   const extendedUsage = deferred<{ inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; maxTokens: number }>();
@@ -264,7 +259,7 @@ function vcoderExecutor(messages: readonly ProviderMessage[], invocationId: stri
     let final: SDKResultMessage | undefined;
     try {
       const selectedModel = process.env.SAND_VCODER_MODEL?.trim();
-      for await (const message of queryClaude({ prompt: providerPrompt(messages), options: { pathToClaudeCodeExecutable: executable, cwd: getSandRootDir(), env: { ...process.env, ...readVCoderSettingsEnv() }, ...(mcpServerUrl == null ? {} : { mcpServers: { grok_bot_plugins: { type: "http" as const, url: mcpServerUrl } }, strictMcpConfig: true }), permissionMode: "bypassPermissions", maxTurns: 16, persistSession: false, ...(selectedModel == null || selectedModel.length === 0 ? {} : { model: selectedModel }) } })) if (message.type === "result") final = message;
+      for await (const message of queryClaude({ prompt: providerPrompt(messages), options: { pathToClaudeCodeExecutable: executable, cwd: isRunningInsideSandBox() ? "/workspace" : getSandRootDir(), env: { ...process.env, ...readVCoderSettingsEnv() }, ...(mcpServerUrl == null ? {} : { mcpServers: { grok_bot_plugins: { type: "http" as const, url: mcpServerUrl } }, strictMcpConfig: true }), permissionMode: "bypassPermissions", maxTurns: 16, persistSession: false, ...(selectedModel == null || selectedModel.length === 0 ? {} : { model: selectedModel }) } })) if (message.type === "result") final = message;
     } catch (error) {
       const reported = final != null && final.subtype === "success" ? vcoderResultError(final.result) : null;
       const failure = reported == null ? error : new Error(reported);

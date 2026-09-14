@@ -17,6 +17,12 @@ export interface HostInferenceOptions {
 export function createHostInference(options: HostInferenceOptions) {
   const { auth, experiments, settings } = options;
   const routerSettings = new SandSettingsStore(join(getSandRootDir(), "settings.json"));
+  // The local Docker VM cannot see the desktop's settings file, so the connector
+  // pins the selected provider into the container environment at creation time.
+  const selectedProvider = (): SandInferenceProvider => {
+    const override = process.env.SAND_INFERENCE_PROVIDER?.trim();
+    return override != null && override.length > 0 ? override as SandInferenceProvider : routerSettings.getInferenceProvider();
+  };
   const cursor = createCursorSandInference({
     getAccessToken: auth.getAccessToken,
     getMachineId: auth.getMachineId,
@@ -56,12 +62,12 @@ export function createHostInference(options: HostInferenceOptions) {
   return {
     ...cursor,
     createSession(onRequestId: (requestId: string) => void, sessionOptions?: Parameters<typeof cursor.createSession>[1]) {
-      const provider = routerSettings.getInferenceProvider();
+      const provider = selectedProvider();
       if (provider === "cursor") return routedSession(cursor.createSession(onRequestId, sessionOptions), provider);
       return createProviderPromptSession(provider) as ReturnType<typeof cursor.createSession>;
     },
     createSummarizationSession(onRequestId: (requestId: string) => void, sessionOptions?: Parameters<NonNullable<typeof cursor.createSummarizationSession>>[1]) {
-      const provider = routerSettings.getInferenceProvider();
+      const provider = selectedProvider();
       if (provider === "cursor") return routedSession(cursor.createSession(onRequestId, { ...(sessionOptions ?? {}), isSummarizationSession: true }), provider) as ReturnType<NonNullable<typeof cursor.createSummarizationSession>>;
       return createProviderPromptSession(provider) as ReturnType<NonNullable<typeof cursor.createSummarizationSession>>;
     },

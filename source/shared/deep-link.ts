@@ -1,6 +1,6 @@
 import { buildSandPluginDeepLink, isSandDeepLinkPluginId, SAND_PLUGIN_DEEP_LINK_PATH } from "./desktop.js";
 
-export const SAND_DEEP_LINK_SCHEME = "sand"; export const SAND_DEEP_LINK_AUTHORITY = "app"; export const SAND_HTTPS_DEEP_LINK_ORIGIN = "https://cursor.com"; export const SAND_HTTPS_DEEP_LINK_PATH_PREFIX = "/sand/link"; export const SAND_DEEP_LINK_MAX_LENGTH = 2_048;
+export const SAND_DEEP_LINK_SCHEME = "sand"; export const SAND_DEEP_LINK_AUTHORITY = "app"; export const SAND_HTTPS_DEEP_LINK_ORIGIN = "https://www.example.com"; export const SAND_HTTPS_DEEP_LINK_PATH_PREFIX = "/sand/link"; export const SAND_DEEP_LINK_MAX_LENGTH = 2_048;
 const CUSTOM_INFO_ROUTE_PATH = "/v1/info"; const CUSTOM_OPEN_ROUTE_PATH = "/v1/open"; const HTTPS_INFO_ROUTE_PATH = `${SAND_HTTPS_DEEP_LINK_PATH_PREFIX}${CUSTOM_INFO_ROUTE_PATH}`; const HTTPS_PLUGIN_ADD_ROUTE_PATH = `${SAND_HTTPS_DEEP_LINK_PATH_PREFIX}${SAND_PLUGIN_DEEP_LINK_PATH}`; const HTTPS_OPEN_ROUTE_PATH = `${SAND_HTTPS_DEEP_LINK_PATH_PREFIX}${CUSTOM_OPEN_ROUTE_PATH}`;
 export type SandDeepLink = { readonly version: 1; readonly route: "info"; readonly topic: "deep-links"; readonly source: "protocol" | "https" } | { readonly version: 1; readonly route: "plugin-add"; readonly pluginId: string; readonly source: "protocol" | "https" } | { readonly version: 1; readonly route: "open"; readonly source: "protocol" | "https" };
 export interface ParsedSandDeepLink { readonly link: SandDeepLink; readonly canonicalUrl: string }

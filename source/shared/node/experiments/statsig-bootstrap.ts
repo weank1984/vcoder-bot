@@ -8,8 +8,10 @@ import { getSandBackendClientHeaders } from "../sand-client-metadata.js";
 import { parseRetryAfterHeaderMs } from "../../retry-after.js";
 import { reportExperimentsDiagnostic } from "./experiments-diagnostics.js";
 
-export const STATSIG_CLIENT_KEY = "client-Bm4HJ0aDjXHQVsoACMREyLNxm5p6zzuzhO50MgtoT5D";
-export const STATSIG_LOG_EVENT_PROXY_URL = "https://api3.cursor.sh/tev1/v1";
+// Neutralized for OSS: experiment/telemetry wiring defaults to disabled.
+// Set SAND_STATSIG_CLIENT_KEY and SAND_STATSIG_LOG_EVENT_PROXY_URL to opt in.
+export const STATSIG_CLIENT_KEY = process.env.SAND_STATSIG_CLIENT_KEY ?? "";
+export const STATSIG_LOG_EVENT_PROXY_URL = process.env.SAND_STATSIG_LOG_EVENT_PROXY_URL ?? "";
 export const BOOTSTRAP_CACHE_FILENAME = "sand-statsig-bootstrap.json";
 
 export function sandStatsigNetworkUrlAllowed(url: string): boolean { return url.includes("/rgstr"); }

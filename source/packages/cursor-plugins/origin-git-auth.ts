@@ -1,4 +1,6 @@
-export const ORIGIN_GIT_HOSTS = ["origin.cursor.com"] as const;
+// Neutralized for OSS: the upstream origin host is a placeholder. Wire an origin
+// host of your own through buildOriginTokenGitConfig's extraOriginHosts to opt in.
+export const ORIGIN_GIT_HOSTS = ["git.example.com"] as const;
 export const PREFER_ORIGIN_READS_HEADER = "x-prefer-origin-reads: true";
 
 function buildTokenBasicAuthGitConfig(

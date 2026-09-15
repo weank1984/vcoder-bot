@@ -67,8 +67,8 @@ const BCS_AGENT_STORE_BUCKET_HOSTS = [
 ];
 
 const PLAYGROUND_AGENT_STORE_BUCKET_HOSTS = [
-  "agent-stores-928182716709-us-west-2-an.s3.us-west-2.amazonaws.com",
-  "agent-stores-928182716709-us-west-2-an.s3.amazonaws.com",
+  // Neutralized for OSS: upstream playground object-storage hosts removed.
+  "storage.example.com",
 ];
 
 function createBcsPresignedUrlValidator(): (url: URL) => void {
@@ -80,13 +80,14 @@ function isLocalAgentStoreBackendUrl(backendUrl: string): boolean {
   if (trimmed === "") {
     return false;
   }
-  return trimmed.includes("localhost") || trimmed.includes("lclhst.build");
+  return trimmed.includes("localhost");
 }
 
 function isPlaygroundAgentStoreBackendUrl(backendUrl: string): boolean {
+  // Neutralized for OSS: upstream playground backend host removed.
   try {
     const hostname = new URL(backendUrl).hostname.toLowerCase();
-    return hostname === "playground.cursor.sh" || hostname.endsWith(".playground.cursor.sh");
+    return hostname === "storage.example.com" || hostname.endsWith(".storage.example.com");
   } catch {
     return false;
   }

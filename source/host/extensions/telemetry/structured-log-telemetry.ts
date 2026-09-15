@@ -193,8 +193,8 @@ export const TELEMETRY_FLUSH_TICK_MS = 3_000,
   MAX_ERROR_DETAIL_MESSAGE_LENGTH = 1_024,
   MAX_ERROR_DETAIL_STACK_LENGTH = 4_096,
   TOOL_CALL_MS_CAP = 24 * 60 * 60 * 1_000;
-export function getHostBuiltAtMs(): string {
-  return "1786556440000";
+export function getHostBuiltAtMs(env: NodeJS.ProcessEnv = process.env): string {
+  return env.SAND_HOST_BUILT_AT_MS ?? "1786556440000";
 }
 export function truncateStructuredLogValue(value: string, max: number): string {
   return value.length > max ? value.slice(0, max) : value;

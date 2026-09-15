@@ -22,3 +22,9 @@ Use focused commits. Explain whether a change affects reviewed runtime source,
 the editable frontend, the checksum-pinned packaged renderer, or packaging only.
 Do not weaken checksum, bundle identity, code-signing, or clean-export checks to
 make a build pass.
+
+By contributing to this repository you agree that your contributions are
+licensed under the same terms as the project (the Apache License, Version 2.0 —
+see `LICENSE`). This agreement does not extend to preserving or reintroducing
+upstream identifiers: do not restore proprietary client IDs, endpoints, or
+telemetry destinations that have been neutralized for the public release.

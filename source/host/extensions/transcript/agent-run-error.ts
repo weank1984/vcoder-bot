@@ -5,7 +5,8 @@ export const SAND_INCLUDED_LIMIT_REASON = "sand_included_limit";
 export const RESETS_AT_ABS_OR_ISO = /It resets at \S+\.?/g;
 export const RESETS_IN_CLAUSE = /It resets in [^.]+/g;
 export const MAX_TRAY_ACTIONS = 3;
-export const CURSOR_WEBSITE_ORIGIN = "https://cursor.com";
+// Neutralized for OSS: override with SAND_CURSOR_WEBSITE_URL / CURSOR_WEBSITE_URL.
+export const CURSOR_WEBSITE_ORIGIN = process.env.SAND_CURSOR_WEBSITE_URL ?? process.env.CURSOR_WEBSITE_URL ?? "https://www.example.com";
 export const SUPPORTED_DASHBOARD_ACTION_VERBS = new Set([
   "requestLimitIncrease",
 ]);

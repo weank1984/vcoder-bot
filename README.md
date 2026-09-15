@@ -105,6 +105,23 @@ filesystem. Point `SAND_VCODER_BOX_CLI_PATH` at a Linux (x64 baseline)
 providers that return usage data. These figures are activity records, not an
 authoritative provider invoice.
 
+### Neutralized defaults
+
+For the public release, runtime connection defaults that pointed at upstream
+Cursor infrastructure were neutralized. Telemetry, the updater, experiment
+flagging, and client identifiers now default to disabled or to reserved
+placeholder values (`*.example.com`). To connect the Cursor route or a
+compatible backend, supply your own configuration as environment variables,
+for example:
+
+- `SAND_BACKEND_URL` (or `CURSOR_API_BASE_URL`) — inference/auth backend URL;
+- `SAND_AUTH_CLIENT_ID` — OAuth client ID;
+- `SAND_CURSOR_WEBSITE_URL` (or `CURSOR_WEBSITE_URL`) — portal/website origin;
+- `SAND_SENTRY_DSN` — opt in to error reporting with your own project.
+
+Provider routes that use local sessions (Claude Code, Codex, VCoder, OpenRouter)
+are unaffected.
+
 ### Local Docker sandbox
 
 The Router page also has a **Use local Docker VM** toggle. When enabled, Grok
@@ -231,3 +248,13 @@ For changes, read [CONTRIBUTING.md](CONTRIBUTING.md). For the clean-history
 export procedure, see [docs/PUBLISHING.md](docs/PUBLISHING.md). Technical
 provenance and retained upstream boundaries are described in
 [PROVENANCE.md](PROVENANCE.md) and [NOTICE.md](NOTICE.md).
+
+## License
+
+The reconstructed source code in this repository is licensed under the Apache
+License, Version 2.0. See the [LICENSE](LICENSE) file for the full text.
+
+The license covers only original reconstruction work in this repository. The
+preserved upstream installers and the upstream application, trademarks, and
+renderer material are not licensed by this repository — see
+[NOTICE.md](NOTICE.md) and [PROVENANCE.md](PROVENANCE.md).

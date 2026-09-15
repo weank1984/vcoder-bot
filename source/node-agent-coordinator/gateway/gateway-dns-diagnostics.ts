@@ -5,7 +5,8 @@ import { findSystemErrno } from "../../shared/system-errno.js";
 
 export const DNS_PROBE_TIMEOUT_MS = 2_000;
 export const DNS_PROBE_MIN_INTERVAL_MS = 60_000;
-export const GENERAL_CONTROL_HOSTNAME = "api2.cursor.sh";
+// Neutralized for OSS: upstream control-hostname endpoint replaced with a placeholder.
+export const GENERAL_CONTROL_HOSTNAME = "control.example.com";
 
 export type DnsProbeResult = "resolved" | "timeout" | "not_found" | "temporary_failure" | "error";
 export type DnsDiagnosis = "resolved_before_probe" | "system_path_failure" | "independent_path_failure" | "endpoint_failure" | "cursorvm_failure" | "general_dns_failure" | "inconclusive";
@@ -35,11 +36,11 @@ export function dnsTargetFromBaseUrl(baseUrl: string | null | undefined, createW
   try {
     const url = new URL(baseUrl);
     const labels = url.hostname.split(".");
-    if (url.protocol !== "https:" || labels.length !== 4 || labels[0] == null || labels[0].length === 0 || labels[1] == null || labels[2] !== "cursorvm" || labels[3] !== "com" || !isAllowedCluster(labels[1])) return undefined;
+    if (url.protocol !== "https:" || labels.length !== 4 || labels[0] == null || labels[0].length === 0 || labels[1] == null || labels[2] !== "svc" || labels[3] !== "example" || !isAllowedCluster(labels[1])) return undefined;
     const cluster = labels[1];
     const wildcardLabel = createWildcardLabel();
     if (!/^[a-z0-9-]{1,63}$/.test(wildcardLabel)) return undefined;
-    return { endpointHostname: url.hostname, wildcardHostname: `${wildcardLabel}.${cluster}.cursorvm.com`, cluster };
+    return { endpointHostname: url.hostname, wildcardHostname: `${wildcardLabel}.${cluster}.svc.example`, cluster };
   } catch {
     return undefined;
   }

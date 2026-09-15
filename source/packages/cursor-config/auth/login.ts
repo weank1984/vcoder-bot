@@ -8,9 +8,13 @@ export interface CursorTokens { readonly accessToken: string; readonly refreshTo
 export interface LoginManagerOptions { readonly redirectTarget?: string; readonly apiUrl?: string; readonly websiteUrl?: string }
 export interface LoginLinkHandler { openUrl(url: string): Promise<void> }
 
+// Neutralized for OSS: default endpoints are reserved placeholders. Override with
+// CURSOR_WEBSITE_URL / CURSOR_API_BASE_URL in the process environment.
+const DEFAULT_WEBSITE_URL = "https://www.example.com";
+const DEFAULT_API_BASE_URL = "https://backend.example.com";
 function stripTrailingSlashes(url: string): string { return url.replace(/\/+$/, ""); }
-function resolveWebsiteUrl(url?: string): string { return stripTrailingSlashes(url ?? process.env.CURSOR_WEBSITE_URL ?? "https://cursor.com"); }
-function resolveApiBaseUrl(url?: string): string { return stripTrailingSlashes(url ?? process.env.CURSOR_API_BASE_URL ?? "https://api2.cursor.sh"); }
+function resolveWebsiteUrl(url?: string): string { return stripTrailingSlashes(url ?? process.env.CURSOR_WEBSITE_URL ?? DEFAULT_WEBSITE_URL); }
+function resolveApiBaseUrl(url?: string): string { return stripTrailingSlashes(url ?? process.env.CURSOR_API_BASE_URL ?? DEFAULT_API_BASE_URL); }
 function base64UrlEncode(bytes: Uint8Array): string { return Buffer.from(bytes).toString("base64url"); }
 function sha256(data: string): Buffer { return createHash("sha256").update(data).digest(); }
 

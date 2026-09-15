@@ -1,7 +1,8 @@
 import { projectSandSentryEnvelope } from "./sentry-scrub.gen.js";
 import type { SandSentryPrivacyTier } from "./sentry-privacy-mode.js";
 
-export const SAND_SENTRY_DSN = "https://9fb7a1b8cb70c207a28a00476311bd40@metrics.cursor.sh/4511747394240513";
+// Neutralized for OSS: telemetry is disabled unless SAND_SENTRY_DSN is configured.
+export const SAND_SENTRY_DSN = process.env.SAND_SENTRY_DSN ?? "";
 export const SAND_SENTRY_CONVERSATION_TAG = "sand.conversation_id";
 export const SENTRY_EVENT_ID_PATTERN = /^[0-9a-f]{32}$/;
 export const MAX_SPOOL_PURGE_SHIFTS = 64;

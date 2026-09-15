@@ -70,7 +70,8 @@ function candidateFromUrl(value: string): { prNumber: number; url: string } | nu
   const hostname = url.hostname.toLowerCase();
   const match = hostname === "github.com" || hostname === "www.github.com"
     ? GITHUB_PULL_REQUEST_PATH.exec(url.pathname)
-    : hostname === "review.cursor.com" ? CURSOR_PULL_REQUEST_PATH.exec(url.pathname) : null;
+    // Neutralized for OSS: upstream review portal host replaced with a placeholder.
+    : hostname === "review.example.com" ? CURSOR_PULL_REQUEST_PATH.exec(url.pathname) : null;
   const prNumber = match == null ? null : positiveNumber(match[1]);
   return prNumber == null ? null : { prNumber, url: value };
 }

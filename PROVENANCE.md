@@ -28,6 +28,21 @@ No upstream source-code license is implied. Do not present reconstructed
 material as original source or an official build, and complete an independent
 rights review before public redistribution.
 
+## License
+
+The reconstructed source code in this repository is licensed under the Apache
+License, Version 2.0 (see `LICENSE`). That license applies only to original
+reconstruction work authored in this repository. It does not extend to the
+preserved upstream installers, the upstream application, its trademarks, or any
+third-party dependencies, each of which remains subject to its own terms.
+
+Runtime connection defaults were neutralized for the public release: Cursor
+client identifiers, default backend/website endpoints, staging hosts, and
+telemetry destinations were replaced with environment-read placeholders. Users
+must supply their own configuration (for example `SAND_BACKEND_URL`,
+`SAND_AUTH_CLIENT_ID`, or `SAND_SENTRY_DSN`) to connect to a compatible
+backend.
+
 ## Evidence-only reconstruction rule
 
 The immutable release is the product specification. Recovered source may express

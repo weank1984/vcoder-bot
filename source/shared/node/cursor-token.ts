@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
 
-export const DEFAULT_CURSOR_BACKEND_URL = "https://api2.cursor.sh";
-export const PROD_AUTH_CLIENT_ID = "KbZUR41cY7W6zRSdpSUJ7I7mLYBKOCmB";
-export const DEV_AUTH_CLIENT_ID = "OzaBXLClY5CAGxNzUhQ2vlknpi07tGuE";
+// Neutralized for OSS. The default backend is a reserved placeholder host.
+// Point SAND_BACKEND_URL / CURSOR_API_BASE_URL at a real endpoint and set
+// SAND_AUTH_CLIENT_ID to connect to a provider backend.
+export const DEFAULT_CURSOR_BACKEND_URL = "https://backend.example.com";
+export const PROD_AUTH_CLIENT_ID = "";
+export const DEV_AUTH_CLIENT_ID = "";
 export const TOKEN_REFRESH_LEEWAY_MS = 5 * 60 * 1_000;
 
 export interface JwtPayload { readonly email?: string; readonly exp?: number; readonly sub?: string; readonly [key: string]: unknown; }
@@ -43,7 +46,7 @@ export function getAuthClientId(backendUrl: string, env: NodeJS.ProcessEnv = pro
   const configured = env.SAND_AUTH_CLIENT_ID;
   if (configured != null && configured.length > 0) return configured;
   const hostname = new URL(backendUrl).hostname;
-  return hostname === "localhost" || hostname === "127.0.0.1" || hostname.endsWith(".lclhst.build") || hostname === "dev-staging.cursor.sh" ? DEV_AUTH_CLIENT_ID : PROD_AUTH_CLIENT_ID;
+  return hostname === "localhost" || hostname === "127.0.0.1" ? DEV_AUTH_CLIENT_ID : PROD_AUTH_CLIENT_ID;
 }
 
 export function isDevAuthBackend(backendUrl: string): boolean { return getAuthClientId(backendUrl) !== PROD_AUTH_CLIENT_ID; }

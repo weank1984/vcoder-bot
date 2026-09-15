@@ -20,8 +20,11 @@ export function sandWebAuthnOriginClass(origin: string): SandWebAuthnOriginClass
   } catch {
     return "external";
   }
-  if (hostname === "cursor.com") return "cursor_com";
-  return hostname.endsWith(".cursor.com") ? "subdomain" : "external";
+  // Neutralized for OSS: origin classification matches a reserved placeholder
+  // host instead of the upstream branded origin. All real origins classify as
+  // "external" unless configured otherwise.
+  if (hostname === "www.example.com") return "cursor_com";
+  return hostname.endsWith(".example.com") ? "subdomain" : "external";
 }
 
 export interface WebAuthnCeremony {

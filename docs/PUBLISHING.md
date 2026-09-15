@@ -40,7 +40,10 @@ Before adding a public remote:
 4. Run `git lfs ls-files` and verify both preserved 0.18.0 installers appear.
 5. Scan the exported tree and full new history for credentials and absolute
    machine paths.
-6. Review `NOTICE.md` and obtain an independent rights review. No upstream
-   license is supplied by this repository.
-7. Decide on a license only for material you have authority to license; do not
-   imply that license covers the upstream application or trademarks.
+6. Review `NOTICE.md` and obtain an independent rights review of the upstream
+   application and preserved installers, which are not licensed by this
+   repository.
+7. The reconstructed source under `source/`, `frontend/`, and `scripts/` is
+   licensed under the Apache License, Version 2.0 (`LICENSE`). That license
+   does not cover the preserved installers, the upstream application, or its
+   trademarks. Do not imply otherwise in release notes or metadata.

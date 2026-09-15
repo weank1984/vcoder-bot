@@ -103,8 +103,8 @@ const BCS_AGENT_STORE_BUCKET_HOSTS = new Set([
   "agent-stores.s3.amazonaws.com",
 ]);
 const PLAYGROUND_AGENT_STORE_BUCKET_HOSTS = new Set([
-  "agent-stores-928182716709-us-west-2-an.s3.us-west-2.amazonaws.com",
-  "agent-stores-928182716709-us-west-2-an.s3.amazonaws.com",
+  // Neutralized for OSS: upstream playground object-storage hosts removed.
+  "storage.example.com",
 ]);
 const WINDOWS_RESERVED = new Set([
   "con", "prn", "aux", "nul",
@@ -165,7 +165,7 @@ function validatePresignedUrl(rawUrl: string, relPath: string): void {
     throw new Error(`Refusing presigned URL for ${relPath}: Refused presigned URL with embedded userinfo`);
   }
   const backendUrl = getSandInferenceBackendUrl();
-  if ((backendUrl.includes("localhost") || backendUrl.includes("lclhst.build"))
+  if ((backendUrl.includes("localhost"))
       && url.protocol === "http:" && isLoopbackHostName(url.hostname)) {
     return;
   }
@@ -175,7 +175,7 @@ function validatePresignedUrl(rawUrl: string, relPath: string): void {
   const isPlayground = (() => {
     try {
       const hostname = new URL(backendUrl).hostname.toLowerCase();
-      return hostname === "playground.cursor.sh" || hostname.endsWith(".playground.cursor.sh");
+      return hostname === "storage.example.com" || hostname.endsWith(".storage.example.com");
     } catch {
       return false;
     }

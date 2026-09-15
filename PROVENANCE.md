@@ -1,5 +1,9 @@
 # Provenance
 
+This repository is distributed publicly at
+<https://github.com/weank1984/vcoder-bot> as an open-source (Apache-2.0)
+research reconstruction; the notes below document its technical origins.
+
 The reconstruction is based on the public macOS arm64 release artifact:
 
 - Product: Grok Bot

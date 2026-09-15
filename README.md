@@ -1,5 +1,8 @@
 # Grok Bot 0.18 — reconstructed and extended
 
+![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
+![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/weank1984/vcoder-bot/check.yml)
+
 ![Grok Bot Router settings with Codex selected and local usage totals](docs/assets/router-settings.png)
 
 This repository is an unofficial, source-oriented reconstruction of the
@@ -151,8 +154,8 @@ Remote mode remains the default.
 ## Quick start
 
 ```sh
-git clone <your-repository-url>
-cd grok-bot-0.18-reconstructed
+git clone https://github.com/weank1984/vcoder-bot.git
+cd vcoder-bot
 git lfs install
 git lfs pull
 npm ci
@@ -244,10 +247,16 @@ experimental reconstruction: it targets one pinned macOS/arm64 release, depends
 on external provider sessions, and does not promise compatibility with future
 Grok Bot versions.
 
-For changes, read [CONTRIBUTING.md](CONTRIBUTING.md). For the clean-history
-export procedure, see [docs/PUBLISHING.md](docs/PUBLISHING.md). Technical
-provenance and retained upstream boundaries are described in
-[PROVENANCE.md](PROVENANCE.md) and [NOTICE.md](NOTICE.md).
+This repository is public and open for contribution, but the project remains an
+unofficial, independent research effort. It is not affiliated with, endorsed
+by, or maintained by Anysphere, Cursor, xAI, or the original Grok Bot team.
+
+For changes, read [CONTRIBUTING.md](CONTRIBUTING.md). For behaviour, see the
+[Code of Conduct](CODE_OF_CONDUCT.md) and [GOVERNANCE.md](GOVERNANCE.md). For
+common questions, see [docs/FAQ.md](docs/FAQ.md). For the clean-history export
+procedure, see [docs/PUBLISHING.md](docs/PUBLISHING.md). Technical provenance
+and retained upstream boundaries are described in [PROVENANCE.md](PROVENANCE.md)
+and [NOTICE.md](NOTICE.md).
 
 ## License
 

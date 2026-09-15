@@ -1,0 +1,51 @@
+name: Bug report
+description: Report a bug in the reconstructed application or toolchain
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report. Please search
+        existing issues first to avoid duplicates.
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Which version or commit are you running?
+      placeholder: 0.18.0-reconstructed.1 or a commit SHA
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: macOS version, Apple Silicon vs Intel, Node.js version, Docker version (if using the local sandbox).
+      placeholder: ...d
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What did you run, and what happened?
+      placeholder: 1. npm ci && npm run bootstrap ... 2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include error output, logs, or screenshots.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context
+      description: Anything else relevant, e.g. whether this is in the reconstructed runtime, the editable frontend, or packaging.

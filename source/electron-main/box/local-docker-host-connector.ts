@@ -245,7 +245,12 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
       "--label", `com.grok-bot.local-vm.inference-provider=${inferenceProvider}`,
       "--label", `com.grok-bot.local-vm.schema-version=${LOCAL_DOCKER_SCHEMA_VERSION}`,
       "--platform", "linux/amd64", "--restart", "unless-stopped",
-      "--env", "SAND_SUPERVISOR_ENABLED=1", "--env", "SAND_BOX_AUTO_UPDATE=0", "--env", "SAND_USE_EXISTING_BOX_EXEC_DAEMON=1", "--env", "SAND_TREE_SITTER_NODE_DEPS=/home/box/deps", "--env", "NODE_PATH=/home/box/deps", "--env", "SAND_GATEWAY_BIND_HOST=0.0.0.0", "--env", "SAND_HOST_PORT=1340", "--env", `SAND_GATEWAY_TOKEN=${token}`,
+      // The Claude Agent SDK writes its debug stream to ~/.claude/debug when no
+      // CLAUDE_CODE_DEBUG_LOGS_DIR is set. With the read-only ~/.claude bind
+      // mount below that write lands on a read-only filesystem and the SDK's
+      // buffered logger throws EROFS, killing routed VCoder turns. Point it at
+      // a writable path inside the box instead.
+      "--env", "SAND_SUPERVISOR_ENABLED=1", "--env", "SAND_BOX_AUTO_UPDATE=0", "--env", "SAND_USE_EXISTING_BOX_EXEC_DAEMON=1", "--env", "SAND_TREE_SITTER_NODE_DEPS=/home/box/deps", "--env", "NODE_PATH=/home/box/deps", "--env", "SAND_GATEWAY_BIND_HOST=0.0.0.0", "--env", "SAND_HOST_PORT=1340", "--env", "CLAUDE_CODE_DEBUG_LOGS_DIR=/tmp/claude-debug-logs", "--env", `SAND_GATEWAY_TOKEN=${token}`,
       "--env", `SAND_INFERENCE_PROVIDER=${inferenceProvider}`,
       ...(vcoder == null ? [] : ["--env", `SAND_VCODER_CLI_PATH=${VCODER_BOX_CLI_CONTAINER_PATH}`]),
       ...(process.env.SAND_VCODER_MODEL?.trim() ? ["--env", `SAND_VCODER_MODEL=${process.env.SAND_VCODER_MODEL.trim()}`] : []),

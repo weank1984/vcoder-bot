@@ -1603,6 +1603,54 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
     // dependency-closed built Agent is supplied by the real turn join.
     runnerOptions.createTurnAgentStreamStart = createTurnAgentStreamStart;
 
+    // Gives the routed provider CLI path (vcoder) the same Computer/Screenshot
+    // execution the cursor path's turn-toolset gets, projected through an MCP
+    // bridge instead of the in-process tool registry (see
+    // vcoder-computer-mcp-bridge.ts). Shared by both production owner call
+    // sites below (the recovered constructor and the live
+    // productionTurnRunShell path) so routed providers get computer-use
+    // regardless of which one is active.
+    //
+    // Deliberately re-resolves the accessor via productionResourceAccessor
+    // (defined above, L1526) instead of reusing the turn-local accessor the
+    // caller already built: only that path runs the box's ensureReady/window
+    // assignment (SharedDesktopSandBox.ensureReady) that actually registers
+    // the computerUseArgs handler on the box side. The turn-local resource
+    // accessor skips that coordination, which is why a first attempt at this
+    // wiring produced "No handler found for server message of type
+    // computerUseArgs": the executor resource resolved to a box seat with no
+    // window/handler bound to it yet.
+    //
+    // Deliberately omits autoReview (unlike createComputerToolDependencies
+    // above, which cursor's turn-toolset uses): its click/drag preflight
+    // (captureComputerDisplayStateIdentity) probes browser navigation state
+    // via CDP, which only makes sense for the browser-oriented cursor path.
+    // Against a plain desktop click (e.g. a dock icon, a window control) that
+    // probe has nothing to capture and fails every time, which drove vcoder
+    // into a repeat-and-crash loop ("Computer Auto-review could not capture
+    // the current page state" on every click, ending in the CLI exiting
+    // non-zero). Vcoder's Computer tool runs unreviewed instead.
+    const createRoutedComputerUseBinding = async (
+      _resourceAccessor: Parameters<typeof createHostComputerToolDependencies>[0]["resourceAccessor"],
+      context: unknown,
+    ) => ({
+      context,
+      dependencies: createHostComputerToolDependencies({
+        resourceAccessor: await productionResourceAccessor(context),
+        ...(persistImageForTurn === undefined
+          ? {}
+          : { persistImage: persistImageForTurn }),
+        isUnicodeTypingEnabled: () =>
+          method(experiments, "isUnicodeTypingEnabled")?.() ?? false,
+        onComputerAction: action => {
+          deps.emitGatewayEvent({
+            channel: "computer-action",
+            payload: { agentId: session.id, ...action },
+          });
+        },
+      }),
+    });
+
     // Host-owned production caller for the recovered constructor. The caller
     // supplies the typed per-turn prompt/action and summarization identities;
     // resource readiness and blob ownership remain fixed to this session.
@@ -1625,6 +1673,7 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
         blobStore: getAgentBlobStore(
           session.agentStore as Parameters<typeof getAgentBlobStore>[0],
         ),
+        routedComputerUse: createRoutedComputerUseBinding,
       });
     };
     runnerOptions.createProductionTurnAgentRunInput =
@@ -2534,6 +2583,7 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
                     : { profilePromptSnapshotStore };
                 })()),
             emittedConnectorCards: new Set(),
+            routedComputerUse: createRoutedComputerUseBinding,
           } satisfies ProductionTurnAgentOwnerInput;
         },
         promptOptions: (_prompt, options) => toGeneratedTurnPromptOptions(options),

@@ -29,6 +29,7 @@ import type {
 } from "./system-prompt-assembly.js";
 import type { SummarizationPromptSession } from "../../packages/agent-summarization/summarization-handler.js";
 import { createProviderPromptSession } from "../extensions/inference/provider-session.js";
+import type { VCoderComputerUseBinding } from "../extensions/inference/provider-session.js";
 import { getSandRootDir } from "../host-paths.js";
 import { SandSettingsStore } from "../../shared/node/settings/sand-settings-store.js";
 import type { AgentProfilePromptSnapshot } from "./sand-agent-profile-prompt.js";
@@ -130,6 +131,14 @@ export interface TurnAgentRunContextInput<ContextValue> {
   readonly onLatestPromptMessages?: (
     getter: () => readonly MessageLike[],
   ) => void;
+  /**
+   * Lazily produces the box's computer-use dependencies for the routed
+   * provider CLI path (vcoder). Only consulted when the active inference
+   * provider is a routed provider; cursor keeps using its own turn-toolset
+   * Computer/Screenshot wiring instead. Errors surface as a rejected promise
+   * on first tool call rather than blocking session creation.
+   */
+  readonly routedComputerUse?: () => Promise<VCoderComputerUseBinding>;
 }
 
 export interface TurnAgentRunContext<ContextValue> {
@@ -190,7 +199,7 @@ export async function createTurnAgentRunContext<ContextValue>(
     // text, which the chat never renders; deliverFinalText lets the provider
     // executor route the final reply through a real SendMessage call. Subagent
     // and silence-allowed (e.g. quiet routine) turns keep the text internal.
-    : createProviderPromptSession(inferenceProvider, { streamActivity: true, deliverFinalText: !input.isSubagentRunner && !input.isSilenceAllowed }) as unknown as TurnAgentPromptSession;
+    : createProviderPromptSession(inferenceProvider, { streamActivity: true, deliverFinalText: !input.isSubagentRunner && !input.isSilenceAllowed, ...(input.routedComputerUse === undefined ? {} : { computerUse: input.routedComputerUse }) }) as unknown as TurnAgentPromptSession;
   const summarizationSession = inferenceProvider === "cursor" ? input.inference.createSummarizationSession?.(
     input.onRequestId,
     {

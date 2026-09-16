@@ -14,10 +14,16 @@ export const LOCAL_DOCKER_BOX_IMAGE = "public.ecr.aws/k0i0n2g5/cursorenvironment
 export const LOCAL_DOCKER_BOX_CONTAINER = "grok-bot-local-vm";
 export const LOCAL_DOCKER_GATEWAY_URL = "http://127.0.0.1:1340";
 export const LOCAL_DOCKER_OWNER_LABEL = "com.grok-bot.local-vm=1";
-export const LOCAL_DOCKER_SCHEMA_VERSION = "6";
-export const VCODER_BOX_CLI_ENV = "SAND_VCODER_BOX_CLI_PATH";
-export const VCODER_BOX_CLI_CONTAINER_PATH = "/opt/vcoder/vcoder-cli";
+export const LOCAL_DOCKER_SCHEMA_VERSION = "7";
+// vcoder now runs embedded in-process inside the box's host bundle (see
+// vcoder-runtime-bridge.ts) rather than as a spawned CLI subprocess, so the
+// box no longer stages or mounts the Linux CLI binary. The box still needs
+// the desktop-side ~/.vcoder/settings.json's credential env block — the
+// embedded runtime's readVCoderSettingsEnv() call reads it the same way the
+// CLI executor used to — so settings.json is still staged and mounted, just
+// without VCODER_BOX_CLI_ENV or the CLI binary path.
 const READY_TIMEOUT_MS = 180_000;
+export const DEFAULT_BOX_VCODER_MODEL = "deepseek-v4.1-flash";
 const OPTIONAL_CREDENTIAL_TIMEOUT_MS = 3_000;
 
 export interface LocalDockerStatus {
@@ -86,9 +92,9 @@ async function gatewayReady(token: string): Promise<boolean> {
   } catch { return false; }
 }
 
-async function inspectContainer(): Promise<{ exists: boolean; running: boolean; owned: boolean; image: string; hostSha256: string; vcoderCliSha256: string; hasInferenceCredential: boolean; inferenceProvider: string; schemaVersion: string }> {
+async function inspectContainer(): Promise<{ exists: boolean; running: boolean; owned: boolean; image: string; hostSha256: string; vcoderSettingsSha256: string; hasInferenceCredential: boolean; inferenceProvider: string; schemaVersion: string }> {
   const result = await runDocker(["inspect", "--format", "{{json .}}", LOCAL_DOCKER_BOX_CONTAINER]);
-  if (!result.ok) return { exists: false, running: false, owned: false, image: "", hostSha256: "", vcoderCliSha256: "", hasInferenceCredential: false, inferenceProvider: "", schemaVersion: "" };
+  if (!result.ok) return { exists: false, running: false, owned: false, image: "", hostSha256: "", vcoderSettingsSha256: "", hasInferenceCredential: false, inferenceProvider: "", schemaVersion: "" };
   try {
     const value = JSON.parse(result.output) as { State?: { Running?: unknown }; Config?: { Image?: unknown; Labels?: Record<string, unknown> } };
     return {
@@ -97,7 +103,7 @@ async function inspectContainer(): Promise<{ exists: boolean; running: boolean; 
       owned: value.Config?.Labels?.["com.grok-bot.local-vm"] === "1",
       image: typeof value.Config?.Image === "string" ? value.Config.Image : "",
       hostSha256: typeof value.Config?.Labels?.["com.grok-bot.local-vm.host-sha256"] === "string" ? value.Config.Labels["com.grok-bot.local-vm.host-sha256"] as string : "",
-      vcoderCliSha256: typeof value.Config?.Labels?.["com.grok-bot.local-vm.vcoder-cli-sha256"] === "string" ? value.Config.Labels["com.grok-bot.local-vm.vcoder-cli-sha256"] as string : "",
+      vcoderSettingsSha256: typeof value.Config?.Labels?.["com.grok-bot.local-vm.vcoder-settings-sha256"] === "string" ? value.Config.Labels["com.grok-bot.local-vm.vcoder-settings-sha256"] as string : "",
       hasInferenceCredential: value.Config?.Labels?.["com.grok-bot.local-vm.inference-credential"] === "1",
       inferenceProvider: typeof value.Config?.Labels?.["com.grok-bot.local-vm.inference-provider"] === "string" ? value.Config.Labels["com.grok-bot.local-vm.inference-provider"] as string : "",
       schemaVersion: typeof value.Config?.Labels?.["com.grok-bot.local-vm.schema-version"] === "string" ? value.Config.Labels["com.grok-bot.local-vm.schema-version"] as string : "",
@@ -166,52 +172,37 @@ async function localAuthMountArguments(): Promise<string[]> {
   return mounts;
 }
 
-interface VCoderBoxCli { readonly cliPath: string; readonly settingsPath: string; readonly sha256: string }
+interface VCoderBoxSettings { readonly settingsPath: string; readonly sha256: string }
 
-// Stages the VCoder Linux CLI into the local VM: the binary itself plus a full
-// ~/.vcoder/settings.json (including the env block with the VCoder credentials).
-// The in-box host spawns the CLI directly as a child process — the same topology
-// as the original design, where the agent runs inside the box.
-async function stageVCoderBoxCli(settingsPath: string): Promise<VCoderBoxCli | null> {
-  const source = process.env[VCODER_BOX_CLI_ENV]?.trim();
-  if (source == null || source.length === 0) return null;
-  let bytes: Buffer;
-  try { bytes = await readFile(source); } catch { throw new Error(`${VCODER_BOX_CLI_ENV} points at an unreadable file: ${source}`); }
-  const sha256 = createHash("sha256").update(bytes).digest("hex");
-  const root = dirname(settingsPath);
-  const directory = join(root, "local-docker-runtime", `vcoder-${sha256}`);
-  const cliPath = join(directory, "vcoder-cli");
-  try {
-    const existing = await readFile(cliPath);
-    if (!existing.equals(bytes)) throw new Error(`Content-addressed VCoder runtime ${cliPath} has unexpected bytes.`);
-  } catch (error) {
-    if (error instanceof Error && !Reflect.has(error, "code")) throw error;
-    const temporary = `${cliPath}.${process.pid}.tmp`;
-    await mkdir(directory, { recursive: true });
-    await writeFile(temporary, bytes, { mode: 0o755 });
-    await rename(temporary, cliPath);
-  }
-
+// Stages a copy of the desktop-side ~/.vcoder/settings.json (including its
+// env block with VCoder credentials) into the local VM. The box's embedded
+// VcoderCoreRuntimeImpl (vcoder-runtime-bridge.ts) reads these credentials
+// via readVCoderSettingsEnv() the same way the formerly-spawned CLI did; only
+// the CLI binary itself is no longer needed since vcoder runs in-process
+// inside the box's host bundle rather than as a spawned subprocess.
+async function stageVCoderBoxSettings(settingsPath: string): Promise<VCoderBoxSettings | null> {
   let hostSettings: Record<string, unknown> = {};
-  try { hostSettings = JSON.parse(await readFile(join(homedir(), ".vcoder", "settings.json"), "utf8")) as Record<string, unknown>; } catch {}
+  try { hostSettings = JSON.parse(await readFile(join(homedir(), ".vcoder", "settings.json"), "utf8")) as Record<string, unknown>; } catch { return null; }
+  const settingsContent = `${JSON.stringify(hostSettings, null, 2)}\n`;
+  const sha256 = createHash("sha256").update(settingsContent).digest("hex");
+  const directory = join(dirname(settingsPath), "local-docker-runtime", `vcoder-settings-${sha256}`);
   const settingsTarget = join(directory, "settings.json");
   // This file is single-file bind-mounted into the local VM, so it must be
   // rewritten in place: an atomic rename would swap the inode and leave the
   // container's mount dangling.
-  const settingsContent = `${JSON.stringify(hostSettings, null, 2)}\n`;
   const existingSettings = await readFile(settingsTarget, "utf8").catch(() => null);
   if (existingSettings !== settingsContent) {
+    await mkdir(directory, { recursive: true });
     await writeFile(settingsTarget, settingsContent, { encoding: "utf8", mode: 0o600 });
     await chmod(settingsTarget, 0o600);
   }
-
-  return { cliPath, settingsPath: settingsTarget, sha256 };
+  return { settingsPath: settingsTarget, sha256 };
 }
 
 async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: InferenceCredential): Promise<GatewayConnection> {
   const token = await readOrCreateToken(settingsPath);
   const hostBundle = await stageCurrentHostBundle(settingsPath);
-  const vcoder = await stageVCoderBoxCli(settingsPath);
+  const vcoder = await stageVCoderBoxSettings(settingsPath);
   const inferenceProvider = new SandSettingsStore(settingsPath).getInferenceProvider();
   const inferenceFile = inferenceCredential == null ? undefined : await persistInferenceCredential(settingsPath, inferenceCredential);
   const daemon = await runDocker(["info", "--format", "{{.ServerVersion}}"]).catch(() => ({ ok: false, output: "Docker is not installed." }));
@@ -219,10 +210,10 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
   const inspected = await inspectContainer();
   if (inspected.exists && !inspected.owned) throw new Error(`Local Docker VM cannot use ${LOCAL_DOCKER_BOX_CONTAINER}: an unowned container already has that name.`);
   if (inspected.exists && inspected.image !== LOCAL_DOCKER_BOX_IMAGE) throw new Error(`Local Docker VM container uses unexpected image ${inspected.image}. Remove it explicitly before changing images.`);
-  const isStale = (state: { schemaVersion: string; hostSha256: string; vcoderCliSha256: string; hasInferenceCredential: boolean; inferenceProvider: string }): boolean =>
+  const isStale = (state: { schemaVersion: string; hostSha256: string; vcoderSettingsSha256: string; hasInferenceCredential: boolean; inferenceProvider: string }): boolean =>
     state.schemaVersion !== LOCAL_DOCKER_SCHEMA_VERSION
     || state.hostSha256 !== hostBundle.sha256
-    || state.vcoderCliSha256 !== (vcoder?.sha256 ?? "")
+    || state.vcoderSettingsSha256 !== (vcoder?.sha256 ?? "")
     || state.inferenceProvider !== inferenceProvider
     || (inferenceCredential != null && !state.hasInferenceCredential);
   if (inspected.exists && isStale(inspected)) {
@@ -240,7 +231,7 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
       "run", "--detach", "--name", LOCAL_DOCKER_BOX_CONTAINER,
       "--label", LOCAL_DOCKER_OWNER_LABEL, "--label", `com.grok-bot.local-vm.host-sha256=${hostBundle.sha256}`,
       "--label", `com.grok-bot.local-vm.box-exec-daemon-sha256=${hostBundle.boxExecDaemonSha256}`,
-      "--label", `com.grok-bot.local-vm.vcoder-cli-sha256=${vcoder?.sha256 ?? ""}`,
+      "--label", `com.grok-bot.local-vm.vcoder-settings-sha256=${vcoder?.sha256 ?? ""}`,
       "--label", `com.grok-bot.local-vm.inference-credential=${inferenceCredential == null ? "0" : "1"}`,
       "--label", `com.grok-bot.local-vm.inference-provider=${inferenceProvider}`,
       "--label", `com.grok-bot.local-vm.schema-version=${LOCAL_DOCKER_SCHEMA_VERSION}`,
@@ -248,12 +239,18 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
       // The Claude Agent SDK writes its debug stream to ~/.claude/debug when no
       // CLAUDE_CODE_DEBUG_LOGS_DIR is set. With the read-only ~/.claude bind
       // mount below that write lands on a read-only filesystem and the SDK's
-      // buffered logger throws EROFS, killing routed VCoder turns. Point it at
-      // a writable path inside the box instead.
+      // buffered logger throws EROFS, killing routed turns. Point it at
+      // a writable path inside the box instead. This still applies with vcoder
+      // embedded in-process: the claude-code provider (and the SDK types the
+      // embedded @vcoder/agent-core query loop pulls in) share this same
+      // debug-log code path.
       "--env", "SAND_SUPERVISOR_ENABLED=1", "--env", "SAND_BOX_AUTO_UPDATE=0", "--env", "SAND_USE_EXISTING_BOX_EXEC_DAEMON=1", "--env", "SAND_TREE_SITTER_NODE_DEPS=/home/box/deps", "--env", "NODE_PATH=/home/box/deps", "--env", "SAND_GATEWAY_BIND_HOST=0.0.0.0", "--env", "SAND_HOST_PORT=1340", "--env", "CLAUDE_CODE_DEBUG_LOGS_DIR=/tmp/claude-debug-logs", "--env", `SAND_GATEWAY_TOKEN=${token}`,
       "--env", `SAND_INFERENCE_PROVIDER=${inferenceProvider}`,
-      ...(vcoder == null ? [] : ["--env", `SAND_VCODER_CLI_PATH=${VCODER_BOX_CLI_CONTAINER_PATH}`]),
-      ...(process.env.SAND_VCODER_MODEL?.trim() ? ["--env", `SAND_VCODER_MODEL=${process.env.SAND_VCODER_MODEL.trim()}`] : []),
+      // The embedded VcoderCoreRuntimeImpl gets its own VCODER_HOME (rendered
+      // by vcoder-runtime-bridge.ts, not this settings.json) for provider/model
+      // selection; this mount only supplies the credential env block that
+      // renderVCoderRuntimeSettings() copies over via readVCoderSettingsEnv().
+      "--env", `SAND_VCODER_MODEL=${process.env.SAND_VCODER_MODEL?.trim() || DEFAULT_BOX_VCODER_MODEL}`,
       ...(inferenceCredential == null ? [] : ["--env", "SAND_DEV_INFERENCE_TOKEN_FILE=/run/grok-bot/inference.json", "--env", `SAND_BACKEND_URL=${inferenceCredential.backendUrl}`]),
       "--publish", "127.0.0.1:1337:1337", "--publish", "127.0.0.1:1339:1339", "--publish", "127.0.0.1:1340:1340",
       "--publish", "127.0.0.1:6080:6080", "--publish", "127.0.0.1:6081:6081", "--publish", "127.0.0.1:8790:8790",
@@ -261,7 +258,6 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
       "--mount", `type=bind,src=${hostBundle.path},dst=/home/box/sand-host/host-main.cjs,readonly`,
       "--mount", `type=bind,src=${dirname(hostBundle.boxExecDaemonPath)},dst=/home/box/box-exec-daemon,readonly`,
       ...(vcoder == null ? [] : [
-        "--mount", `type=bind,src=${vcoder.cliPath},dst=${VCODER_BOX_CLI_CONTAINER_PATH},readonly`,
         "--mount", `type=bind,src=${vcoder.settingsPath},dst=/root/.vcoder/settings.json,readonly`,
       ]),
       ...(inferenceFile == null ? [] : ["--mount", `type=bind,src=${dirname(inferenceFile)},dst=/run/grok-bot,readonly`]),

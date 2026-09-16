@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 
@@ -27,26 +27,10 @@ export function resolveClaudeCodeCliPath(): string | null {
   return firstExecutable([process.env.CLAUDE_CODE_PATH, join(home, ".local", "bin", "claude"), join(home, ".claude", "local", "claude"), ...pathCandidates("claude"), "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]);
 }
 
-export function resolveVCoderCliPath(): string | null {
-  const home = homedir();
-  return firstExecutable([process.env.SAND_VCODER_CLI_PATH, process.env.VCODER_CLI_PATH, join(home, ".local", "bin", "vcoder"), ...pathCandidates("vcoder"), "/opt/homebrew/bin/vcoder", "/usr/local/bin/vcoder"]);
-}
-
-// The local Docker connector stages the Linux CLI content-addressed under
-// ~/.grokbot/local-docker-runtime/vcoder-<sha>/vcoder-cli.
-function resolveVCoderBoxCliPath(home: string): string | null {
-  const fromEnv = process.env.SAND_VCODER_BOX_CLI_PATH?.trim();
-  if (fromEnv != null && fromEnv.length > 0 && existsSync(fromEnv)) return fromEnv;
-  const runtimeRoot = join(home, ".grokbot", "local-docker-runtime");
-  try {
-    for (const entry of readdirSync(runtimeRoot)) {
-      if (!entry.startsWith("vcoder-")) continue;
-      const candidate = join(runtimeRoot, entry, "vcoder-cli");
-      if (existsSync(candidate)) return candidate;
-    }
-  } catch {}
-  return null;
-}
+// vcoder now runs embedded in-process via @vcoder/server's VcoderCoreRuntimeImpl
+// (see vcoder-runtime-bridge.ts) instead of a spawned CLI subprocess, so no
+// vcoder binary lookup is needed anymore; kept only for readVCoderSettingsEnv's
+// use as the desktop-side credential source.
 
 export function readVCoderSettingsEnv(): Record<string, string> {
   try {
@@ -74,10 +58,6 @@ export function getLocalInferenceCliStatus(options?: { readonly boxRuntime?: str
   const home = homedir();
   const codexPath = resolveCodexCliPath();
   const claudePath = resolveClaudeCodeCliPath();
-  const vcoderPath = resolveVCoderCliPath();
-  // With the local Docker VM, VCoder turns run inside the box using the staged
-  // Linux binary, so a desktop-side install is not required.
-  const vcoderBoxPath = options?.boxRuntime === "local-docker" ? resolveVCoderBoxCliPath(home) : null;
   const codexAuthPath = join(process.env.CODEX_HOME?.trim() || join(home, ".codex"), "auth.json");
   const hasCodexAuthFile = existsSync(codexAuthPath);
   const hasCodexLogin = hasUsableCodexLogin(codexAuthPath);
@@ -86,8 +66,9 @@ export function getLocalInferenceCliStatus(options?: { readonly boxRuntime?: str
     // existing Codex login. The CLI binary is not in the request path.
     codex: { installed: hasCodexAuthFile, authenticated: hasCodexLogin, executablePath: codexPath },
     "claude-code": { installed: claudePath != null, authenticated: existsSync(join(home, ".claude", ".credentials.json")) || (process.env.ANTHROPIC_API_KEY?.length ?? 0) > 0, executablePath: claudePath },
-    // VCoder's print/SDK mode does not load the settings.json env block, so any
-    // credential stored there counts as configured and is injected at spawn time.
-    vcoder: { installed: vcoderPath != null || vcoderBoxPath != null, authenticated: Object.keys(readVCoderSettingsEnv()).length > 0, executablePath: vcoderPath ?? vcoderBoxPath },
+    // vcoder runs embedded in-process (VcoderCoreRuntimeImpl bundled into the
+    // host, see vcoder-runtime-bridge.ts) — there is no CLI binary to locate
+    // anymore, so "installed" is always true and only credentials gate use.
+    vcoder: { installed: true, authenticated: Object.keys(readVCoderSettingsEnv()).length > 0, executablePath: null },
   };
 }

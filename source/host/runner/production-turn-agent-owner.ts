@@ -41,6 +41,7 @@ import {
   type TurnAgentInferenceOwner,
   type TurnAgentRunContext,
 } from "./turn-run-shell.js";
+import type { VCoderComputerUseBinding } from "../extensions/inference/provider-session.js";
 
 /**
  * The host-owned inputs immediately before immutable buildAgentForRun.  This
@@ -95,6 +96,16 @@ export interface ProductionTurnAgentOwnerInput {
   readonly emittedConnectorCards: Set<string>;
   readonly diskPressureReminderEpisodeId?: string | null;
   readonly onLatestPromptMessages?: (getter: () => readonly MessageLike[]) => void;
+  /**
+   * Lazily builds the box computer-use dependencies for the routed provider
+   * CLI path (vcoder), sourced from the same per-turn resource accessor used
+   * by the cursor path's Computer/Screenshot tools. Only invoked when the
+   * active inference provider is a routed CLI provider.
+   */
+  readonly routedComputerUse?: (
+    resourceAccessor: TurnAgentResourceAccessor,
+    context: Context,
+  ) => Promise<VCoderComputerUseBinding>;
 }
 
 export interface ProductionTurnAgentOwner {
@@ -154,6 +165,21 @@ export async function createProductionTurnAgentRunInput(
 export async function createProductionTurnAgentOwner(
   input: ProductionTurnAgentOwnerInput,
 ): Promise<ProductionTurnAgentOwner> {
+  // Resource accessor construction is hoisted above the run-context/provider
+  // session creation (normally the second step below) so the routed provider
+  // path (vcoder) can reach the same per-turn resource accessor the cursor
+  // path's Computer/Screenshot tools use, without restructuring the existing
+  // context->session->resources ordering for the cursor path itself.
+  const baseResourceAccessor = await input.createResourceAccessor(input.context);
+  const remoteBoxResourceAccessor = await input.createRemoteBoxResourceAccessor(input.context);
+  const turnLocalResourceProjection = createTurnLocalResourceProjection({
+    ...input.createTurnLocalResourceProjectionInput(baseResourceAccessor),
+    baseAccessor: baseResourceAccessor,
+  });
+  const resourceAccessor = turnLocalResourceProjection.resourceAccessor;
+  const routedComputerUse = input.routedComputerUse === undefined
+    ? undefined
+    : () => input.routedComputerUse!(resourceAccessor, input.context);
   const runContext = await createTurnAgentRunContext({
     context: input.context,
     conversationId: input.conversationId,
@@ -200,16 +226,10 @@ export async function createProductionTurnAgentOwner(
     ...(input.onLatestPromptMessages === undefined
       ? {}
       : { onLatestPromptMessages: input.onLatestPromptMessages }),
+    ...(routedComputerUse === undefined ? {} : { routedComputerUse }),
   });
 
   try {
-    const baseResourceAccessor = await input.createResourceAccessor(input.context);
-    const remoteBoxResourceAccessor = await input.createRemoteBoxResourceAccessor(input.context);
-    const turnLocalResourceProjection = createTurnLocalResourceProjection({
-      ...input.createTurnLocalResourceProjectionInput(baseResourceAccessor),
-      baseAccessor: baseResourceAccessor,
-    });
-    const resourceAccessor = turnLocalResourceProjection.resourceAccessor;
     const turn: TurnToolsetTurnInput = {
       ...input.turn,
       remoteBoxResourceAccessor,

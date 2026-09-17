@@ -39,8 +39,30 @@ import type {
   TranscriptEntry,
   TranscriptManagerLike,
 } from "./transcript-hub.js";
-import { getTranscript, updateEntry } from "./transcript-store.js";
+import { getTranscript, updateEntry, removeEntry } from "./transcript-store.js";
 import type { LiveTranscriptSession } from "./session-runtime.js";
+import { join } from "node:path";
+import { getSandRootDir } from "../../host-paths.js";
+import { SandSettingsStore } from "../../../shared/node/settings/sand-settings-store.js";
+
+// Provider CLIs (vcoder/claude-code/codex) stream plain assistant text as
+// text-delta chunks and only become chat-visible once the whole turn ends
+// (deliverFinalText synthesizes one SendMessage call from the accumulated
+// text — see provider-session.ts). This made the chat feel like it hangs for
+// minutes and then dumps the whole reply at once. cursor-path text-delta must
+// NOT be promoted the same way: its model is explicitly told its plain
+// assistant text is a private scratchpad invisible to the user (see
+// send-message-tool.ts's SendMessage description), so those deltas can
+// contain content the model never intended to show. Gate on the configured
+// inference provider (same source of truth turn-run-shell.ts uses to choose
+// the executor) rather than trying to tag individual updates.
+function isStreamingChatProvider(): boolean {
+  try {
+    return new SandSettingsStore(join(getSandRootDir(), "settings.json")).getInferenceProvider() !== "cursor";
+  } catch {
+    return false;
+  }
+}
 
 export const MAX_REPLY_NUDGES = 3;
 export const REPLY_NUDGE_PROMPT =
@@ -231,8 +253,32 @@ export class TurnRuntime {
   readonly reportedToolCallErrors = new Map<string, Set<string>>();
   readonly reportedToolCallStalls = new Map<string, Set<string>>();
   readonly pendingToolCallStarts = new Map<string, Map<string, number>>();
+  // Tracks the live "typing" transcript entry per session while a provider
+  // turn's text-deltas are still arriving, so successive deltas append to the
+  // same chat bubble instead of creating a new one each time (mirrors
+  // roster-projection.ts's streamingAssistantOutlineId, but for the chat
+  // transcript rather than the side outline panel).
+  readonly streamingAssistantEntryIds = new Map<string, string>();
 
   constructor(readonly tm: TranscriptManagerLike) {}
+
+  finalizeStreamingAssistantEntry(runSession: LiveTranscriptSession | null | undefined): void {
+    const sessionKey = runSession?.id;
+    const key = sessionKey ?? "__active__";
+    const entryId = this.streamingAssistantEntryIds.get(key);
+    if (entryId == null) return;
+    this.streamingAssistantEntryIds.delete(key);
+    // The streaming bubble is scratch state for the "typing…" effect only —
+    // once the turn's real answer lands as a "send-message" entry (or the
+    // turn ends without ever producing one), the streaming entry must be
+    // removed outright, not just flipped to isStreaming:false. Leaving it
+    // around duplicated every reply as two permanent, near-identical chat
+    // bubbles (one from the streaming text, one from the delivered
+    // send-message) instead of the transient flicker this was assumed to be.
+    const isForActiveAgent = runSession == null || runSession.id === this.tm.sessions.activeSession?.id;
+    if (isForActiveAgent && removeEntry(entryId)) this.tm.roster.emit({ type: "removed", id: entryId }, sessionKey);
+    runSession?.db.deleteTranscriptEntry?.(entryId);
+  }
 
   settleCardStatus(args: {
     runSession?: LiveTranscriptSession | null;
@@ -641,6 +687,40 @@ export class TurnRuntime {
       this.tm.runLifecycle.trackActivityFromUpdate(update, runSession.id);
     }
     switch (update.type) {
+      case "text-delta": {
+        // Only provider-path turns (vcoder/claude-code/codex) get their
+        // plain assistant text promoted to a live chat bubble; see
+        // isStreamingChatProvider's comment for why cursor-path text-delta
+        // must never be shown to the user this way.
+        if (!isForActiveAgent || typeof update.text !== "string" || update.text.length === 0) return undefined;
+        if (!isStreamingChatProvider()) return undefined;
+        const sessionKey = runSession?.id;
+        const mapKey = sessionKey ?? "__active__";
+        const existingId = this.streamingAssistantEntryIds.get(mapKey);
+        if (existingId != null) {
+          const updated = updateEntry(existingId, (entry) => ({
+            ...entry,
+            content: `${typeof entry.content === "string" ? entry.content : ""}${update.text}`,
+          }));
+          if (updated != null) {
+            this.tm.roster.emit({ type: "updated", entry: updated }, sessionKey);
+            return updated.id;
+          }
+          this.streamingAssistantEntryIds.delete(mapKey);
+        }
+        const entries = getTranscript();
+        const entry: TranscriptEntry = {
+          kind: "message",
+          id: nextEntryId(entries, "assistant-message"),
+          role: "assistant",
+          content: update.text,
+          isStreaming: true,
+          timestampMs: Date.now(),
+        };
+        this.streamingAssistantEntryIds.set(mapKey, entry.id);
+        this.tm.appendEntry(entry);
+        return entry.id;
+      }
       case "client-side-tool-v2": {
         if (runSession == null) return undefined;
         const event = this.tm.clientSideToolV2.publish(runSession.id, update.update);
@@ -711,10 +791,12 @@ export class TurnRuntime {
         );
         return undefined;
       case "turn-ended":
+        this.finalizeStreamingAssistantEntry(runSession);
         if (runSession != null)
           this.tm.runLifecycle.reportTurnUsage(runSession, update.usage);
         return undefined;
       case "send-message": {
+        this.finalizeStreamingAssistantEntry(runSession);
         const incoming = update.message as SendMessage;
         if (
           (incoming.type === "text" || incoming.type === "attachment") &&

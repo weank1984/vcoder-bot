@@ -166,6 +166,15 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
   const queue = new RuntimeEventQueue();
   const pendingToolNames = new Map<string, string>();
   let accumulatedText = "";
+  // Once a real SendUserMessage/Brief delivery has happened, that IS the
+  // turn's answer — any further plain text_delta is the model's post-hoc
+  // scratchpad aside (observed in practice as a throwaway "Done, sent."),
+  // not additional content to show. Without this flag it got concatenated
+  // onto the real answer with no separator, producing a garbled final
+  // message; with it, subsequent text_delta is still streamed live (so the
+  // typing indicator doesn't look frozen) but no longer folded into the
+  // text that becomes the turn's delivered result.
+  let deliveredViaToolCall = false;
   let cumulativeUsage = { inputTokens: 0, outputTokens: 0 };
   const resultDeferred = Promise.withResolvers<VCoderRuntimeResult>();
 
@@ -177,12 +186,25 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
       if (event.sessionId !== sessionId) return;
       switch (event.type) {
         case "text_delta":
-          accumulatedText += event.text;
+          if (!deliveredViaToolCall) accumulatedText += event.text;
           queue.push({ type: "text-delta", textDelta: event.text });
           return;
         case "thinking_delta":
           queue.push({ type: "reasoning", textDelta: event.text });
           return;
+        // SendUserMessage/Brief (see the permission_request handler below)
+        // delivers its whole message at once rather than as token deltas —
+        // it's the model's primary "talk to the user" tool once permission
+        // is granted, so its text is the turn's actual delivered answer.
+        // Any text_delta that arrives afterward is a post-hoc aside (e.g.
+        // "Done, sent.") and must not be appended to it (see
+        // deliveredViaToolCall above).
+        case "user_message": {
+          accumulatedText = event.message;
+          deliveredViaToolCall = true;
+          queue.push({ type: "text-delta", textDelta: event.message });
+          return;
+        }
         // session_complete never actually carries `usage` in the current
         // VcoderCoreRuntimeImpl (confirmed empirically and by reading
         // vcoder-core.ts's query-loop terminal handling — it tracks
@@ -227,19 +249,54 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
           // runtime-level errors that arrive without a session_complete.
           return;
         }
+        case "permission_request": {
+          // permissionMode "dontAsk" (the previous setting here) silently
+          // denies EVERY non-"none"-risk tool inside the broker, before a
+          // permission_request event is even emitted — including the model's
+          // own SendUserMessage/Brief/SendMessage "talk to the user" tools,
+          // which are classified as approvalRisk:'general', not 'none' (see
+          // packages/server/src/permissions/toolRiskPolicy.ts). With nobody
+          // able to grant those instantly-denied requests, a real turn was
+          // observed retrying SendUserMessage/ToolSearch/SendMessage five
+          // times (each a full model round trip) before giving up and
+          // dumping the answer as plain text — turning a ~10s reply into
+          // 100+ seconds and making the streaming bubble sit empty the whole
+          // time. Switching to permissionMode "default" makes the broker
+          // actually emit a permission_request instead of short-circuiting,
+          // so we can approve exactly the messaging tools here and deny
+          // everything else — the same net effect "dontAsk" had on every
+          // other tool (nothing else becomes more permissive), but the
+          // model's voice is no longer accidentally gagged.
+          const toolName = event.request.toolName;
+          const approved = toolName === "SendUserMessage" || toolName === "Brief" || toolName === "SendMessage";
+          runtime.resolvePermission(sessionId, event.request.id, { approved });
+          return;
+        }
         default:
           return;
       }
     });
 
     try {
+      // SendMessage is agent-to-agent (its own tool description says "Send a
+      // message to another agent" and requires a `to` teammate name);
+      // SendUserMessage/Brief is the one that reaches this human user. A real
+      // turn was observed calling SendMessage without `to` (or with other
+      // malformed shapes) up to 6 times in a row — apparently guessing at
+      // "the" messaging tool — before falling back to SendUserMessage, adding
+      // ~30s of pure retry latency. This one line of prompt guidance is
+      // cheap insurance against that specific confusion; it doesn't change
+      // what's allowed (see the permission_request handler above), just
+      // which tool the model reaches for first.
+      const messagingToolGuidance = "To reply to this user, call SendUserMessage (or its alias Brief) with a `message` string. Do not use SendMessage for this — that tool sends to a different teammate agent, not to the user, and requires a `to` field naming that teammate.";
+      const systemPromptAddendum = [messagingToolGuidance, options?.systemPromptAddendum].filter((part): part is string => part != null && part.length > 0).join("\n\n");
       await runtime.startSession({
         sessionId,
         workingDirectory: home.workingDirectory,
         settings: {
-          permissionMode: "dontAsk",
+          permissionMode: "default",
           maxTurns: options?.maxTurns ?? 16,
-          ...(options?.systemPromptAddendum == null ? {} : { appendSystemPrompt: options.systemPromptAddendum }),
+          appendSystemPrompt: systemPromptAddendum,
         },
         ...(options?.mcpServers == null || options.mcpServers.length === 0 ? {} : { mcpServers: options.mcpServers.map(server => ({ type: server.type, url: server.url, ...(server.name == null ? {} : { name: server.name }) })) }),
       });

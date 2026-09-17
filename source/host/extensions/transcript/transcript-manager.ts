@@ -218,6 +218,16 @@ export class TranscriptManager {
     this.agentRunLifecycleObserver = observer;
   }
   emitAgentRunLifecycle(event: any): void {
+    // Belt-and-suspenders: normally the "text-delta" producing turn also
+    // emits "turn-ended"/"send-message" through handleAgentUpdate, which
+    // already finalizes the streaming chat bubble (see turn-runtime.ts). This
+    // covers the abort/error paths that skip straight to a lifecycle "ended"
+    // event without a matching update, so a "typing…" bubble never gets
+    // stuck open.
+    if (event?.type === "ended") {
+      const runSession = this.runLifecycle.activeRunSession ?? this.sessions.activeSession ?? null;
+      this.turnRuntime.finalizeStreamingAssistantEntry(runSession);
+    }
     this.agentRunLifecycleObserver?.(event);
   }
   setTurnExecution(execution: TurnExecutionPort): void {

@@ -1,0 +1,192 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-18T01:01:00.000Z",
+  "caseId": "B01",
+  "mode": "cloud-control-plane-local-docker",
+  "environmentDeviation": "The user explicitly selected the local Docker image instead of a Linux cloud host. This proves the control-plane-to-container model path, not physical cloud-host or cross-device behavior.",
+  "repository": {
+    "url": "https://github.com/weank1984/vcoder-bot.git",
+    "commit": "5e2bc4e535b93e5ca792606c62d266c732fb8adc"
+  },
+  "runtime": {
+    "provider": "deepseek",
+    "requestedModelLabel": "v4.1 flash",
+    "rejectedModelId": "deepseek-v4.1-flash",
+    "acceptedApiModelId": "deepseek-flash",
+    "modelIdEvidence": "The authenticated DeepSeek /models response listed only deepseek-flash and deepseek-v4-pro; the rejected request returned the same two supported IDs.",
+    "maxTurns": 16,
+    "runnerImageSha256": "fa9eded6578cf493058af77890b396b5280a654d9d3cd8d51cc96a9751437ddb"
+  },
+  "attempts": [
+    {
+      "requestId": "b01-cloud-local-deepseek-r1",
+      "taskId": "task_bdd43d76-f2b7-4f90-a1c3-7fb1b5bdb5b4",
+      "runId": "run_6cdcb0ba-cca6-4f8c-9df2-b6f92c4bfdc7",
+      "outcome": "failed",
+      "durationMs": 115162,
+      "failureClass": "execution",
+      "failure": "git diff --binary HEAD output exceeded 5 MiB",
+      "rootCause": "The first Linux runner image lacked Git LFS. Two hydrated LFS binaries were therefore misclassified as working-tree changes inside the container.",
+      "fix": "Install and system-configure Git LFS in the runner image and include the full command in bounded-command diagnostics."
+    },
+    {
+      "requestId": "b01-cloud-local-deepseek-r2",
+      "taskId": "task_c961f19b-2add-4cc6-8a94-0c2439e3eb9c",
+      "runId": "run_c08c9cd3-edf0-47f7-b16d-66f115b47003",
+      "outcome": "delivered-but-rejected-by-independent-acceptance",
+      "durationMs": 80492,
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "patchSizeBytes": 0,
+      "rootCause": "The driver treated sendMessage completion as turn completion and shut the runtime down before session_complete.",
+      "fix": "Await session_complete and preserve early provider failures across the sendMessage race."
+    },
+    {
+      "requestId": "b01-cloud-local-deepseek-r3",
+      "taskId": "task_817279a7-e1a1-44fa-8011-f1c858c08429",
+      "runId": "run_c8060669-37d9-4964-9f4b-1dadaed36c29",
+      "outcome": "failed",
+      "durationMs": 110729,
+      "failure": "Runner exited before a structured diagnostic was persisted.",
+      "rootCause": "An early rejected session-completion promise was briefly unobserved. After that race was fixed, a reuse of the prepared workspace showed that DeepSeek rejected model ID deepseek-v4.1-flash.",
+      "fix": "Attach an immediate rejection observer and use the provider-advertised API model ID deepseek-flash."
+    },
+    {
+      "requestId": "b01-cloud-local-deepseek-r4",
+      "taskId": "task_ddd217e8-d759-441b-af1b-35114ccd1798",
+      "runId": "run_5a175515-7942-4785-a35b-c60d59f0ddd4",
+      "outcome": "delivered-partial-acceptance",
+      "durationMs": 13747,
+      "workspacePreparationMs": 4498,
+      "inputTokens": 1203,
+      "outputTokens": 942,
+      "modelDurationMs": 8633,
+      "patchSizeBytes": 351,
+      "acceptance": "The file and patch were correct, but the runtime denied Bash, so git diff --check was not run.",
+      "fix": "Preapprove only the exact standalone git diff --check command when the task allows tests; reject compounds, alternate working directories, and every other shell command."
+    },
+    {
+      "requestId": "b01-cloud-local-deepseek-r5",
+      "taskId": "task_e9f6eae6-c7f5-4891-9495-8b5e2cec0081",
+      "runId": "run_b8afbca3-30b7-4f88-80a2-f0b53a7dabbf",
+      "outcome": "passed",
+      "durationMs": 13088,
+      "workspacePreparationMs": 3242,
+      "workspaceSizeMiB": 39,
+      "inputTokens": 1658,
+      "outputTokens": 886,
+      "modelDurationMs": 9518,
+      "patchSizeBytes": 303,
+      "independentAcceptance": {
+        "onlyTargetFileChanged": true,
+        "requiredTextPresent": true,
+        "gitDiffCheckExitCode": 0,
+        "patchContainsOnlyTarget": true,
+        "gitRemoteRemoved": true,
+        "artifactDownloadsMatchRecordedSha256": true,
+        "injectedSecretScan": "clean"
+      },
+      "artifactSha256": {
+        "summary.md": "e33f59a5670fba111e1ba897ef0756f634ab88144faf91bd6f9168cd6d453ef4",
+        "changes.patch": "ba9c9d8d8dd6db66062b9ccbbee08eef1d4ed8e4b99134aecf5798c3cd9f4f04",
+        "files.json": "71f315c5af5aa785b2fcb0afd26e358c3418473458c9a9bc1eb1a3321d48b9ca",
+        "tests.json": "9fd4c0444013d1b76eb2f1514024948a43bb0f907f0269fe5a915bf8e4497d36",
+        "test-output.txt": "ce398df07e286750edca1147d2f2dbcdef76dbe345a1e079358cee91c9075e21",
+        "usage.json": "5c3506d3920185f83af1c7571cd606e86b02a82ad0a80568c5651f71bdd6242f"
+      }
+    },
+    {
+      "requestId": "b01-cloud-local-deepseek-r6",
+      "taskId": "task_6075a6c5-d700-4f3c-99d6-52b178d56ad6",
+      "runId": "run_aa053942-ad5d-4588-a143-943d574f0d50",
+      "outcome": "passed",
+      "durationMs": 13741,
+      "workspacePreparationMs": 4155,
+      "workspaceSizeMiB": 39,
+      "inputTokens": 1236,
+      "outputTokens": 752,
+      "modelDurationMs": 9008,
+      "patchSizeBytes": 376,
+      "independentAcceptance": {
+        "onlyTargetFileChanged": true,
+        "requiredTextPresent": true,
+        "gitDiffCheckExitCode": 0,
+        "patchContainsOnlyTarget": true,
+        "gitRemoteRemoved": true,
+        "injectedSecretScan": "clean"
+      },
+      "artifactSha256": {
+        "summary.md": "5fd655969ba17040366bce1cfed61e0c5e3b11ccc500ad5e34fe7ae629b88d03",
+        "changes.patch": "13e4bb945cebc56dd121194e72ecd7ca0f6b16cf17fba96f0dd975734f1723ee",
+        "files.json": "71f315c5af5aa785b2fcb0afd26e358c3418473458c9a9bc1eb1a3321d48b9ca",
+        "tests.json": "9fd4c0444013d1b76eb2f1514024948a43bb0f907f0269fe5a915bf8e4497d36",
+        "test-output.txt": "ce398df07e286750edca1147d2f2dbcdef76dbe345a1e079358cee91c9075e21",
+        "usage.json": "791c964ad5d9909a6dc4dcdf27734867c5671a3b84fb8f07be28ea2d15725520"
+      }
+    },
+    {
+      "requestId": "b01-cloud-local-deepseek-r7-test-artifact",
+      "taskId": "task_057e822a-ff83-4c25-8998-67aef40fb93e",
+      "runId": "run_e3973aff-6d18-492a-af01-0d46f4e466cd",
+      "outcome": "delivered-but-structured-test-evidence-failed",
+      "durationMs": 10238,
+      "inputTokens": 988,
+      "outputTokens": 637,
+      "modelDurationMs": 6617,
+      "failure": "The command passed, but tests.json remained unknown.",
+      "rootCause": "The permission-request ID was incorrectly assumed to equal the tool-result ID.",
+      "fix": "Associate safe commands with the tool-call ID from tool_use, which matches tool_result."
+    },
+    {
+      "requestId": "b01-cloud-local-deepseek-r8-test-artifact",
+      "taskId": "task_8a96e31a-eb60-434b-b324-6d5bc3d7ea60",
+      "runId": "run_f0556e94-65d1-4087-aaa0-44b310948b59",
+      "outcome": "passed-with-structured-test-evidence",
+      "durationMs": 11753,
+      "workspacePreparationMs": 4170,
+      "inputTokens": 1037,
+      "outputTokens": 595,
+      "modelDurationMs": 6782,
+      "independentAcceptance": {
+        "onlyTargetFileChanged": true,
+        "gitDiffCheckExitCode": 0,
+        "patchContainsOnlyTarget": true,
+        "gitRemoteRemoved": true,
+        "testsJsonStatus": "passed",
+        "testsJsonCommand": "git diff --check",
+        "testOutputStatus": "passed",
+        "injectedSecretScan": "clean"
+      },
+      "artifactSha256": {
+        "summary.md": "ea8fe9614858cdb648f3c7d540904c21542dd758d056646488be8eefa475ec26",
+        "changes.patch": "5ca430fc24e8d4a30655e12e8a637d1390eb4b2c452e591b924aa212210e8652",
+        "files.json": "71f315c5af5aa785b2fcb0afd26e358c3418473458c9a9bc1eb1a3321d48b9ca",
+        "tests.json": "c7c8474d6b47c4b4a333422bf4b8c91b1e4f06dae1a73a1e69cf13066cda32d3",
+        "test-output.txt": "71c82a739f653d910752f7fb5c92d37713a83dad5f134a28662c58129f4a727b",
+        "usage.json": "24d9e2763499edb692b14e98fc04aeb0feafef44c8f8cedb16a1dad8dcb29600"
+      }
+    }
+  ],
+  "diagnosticReplay": {
+    "purpose": "Reuse r3's prepared workspace to separate provider/model failures from clone time.",
+    "acceptedApiModelId": "deepseek-flash",
+    "outcome": "model completed the requested edit and check flow",
+    "inputTokens": 24696,
+    "outputTokens": 1623,
+    "countingNote": "run.usage_updated values are cumulative; only the final event is counted."
+  },
+  "result": {
+    "infrastructure": "passed-for-local-docker",
+    "acceptance": "passed-2-of-2-after-fixes",
+    "manualInterventions": 0,
+    "necessarySafetyDecisions": 0,
+    "activeChecks": 0,
+    "knownEvidenceGap": "modelRequests remains unknown; token totals, command result, duration and artifact hashes are recorded.",
+    "notProven": [
+      "Linux cloud-host deployment",
+      "initiating-device disconnect followed by retrieval from a second physical device",
+      "local VCoder quality parity",
+      "non-implementer usability"
+    ]
+  }
+}

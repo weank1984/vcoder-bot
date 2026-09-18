@@ -30,3 +30,4 @@ node_modules/
 /mermaid.core-*.js
 /xlsx-*.js
 /index.html
+.validation-cloud/

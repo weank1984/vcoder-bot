@@ -1,0 +1,35 @@
+[Unit]
+Description=VCoder validation cloud control plane
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=vcoder-validation
+Group=vcoder-validation
+SupplementaryGroups=docker
+WorkingDirectory=/opt/vcoder-bot
+EnvironmentFile=/etc/vcoder-validation/control.env
+ExecStart=/usr/bin/node /opt/vcoder-bot/.build/validation-cloud/server.cjs
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=45
+UMask=0077
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/vcoder-validation
+ReadOnlyPaths=/etc/vcoder-validation/runner.env
+
+[Install]
+WantedBy=multi-user.target

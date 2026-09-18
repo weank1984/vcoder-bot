@@ -1,0 +1,114 @@
+[
+  {
+    "caseId": "B02",
+    "repetition": 1,
+    "taskId": "baseline-20260918-v1-B02-r1",
+    "mode": "direct-local-docker",
+    "preparationMs": 1084,
+    "preparationComparable": false,
+    "acceptance": "passed",
+    "limitations": [
+      "Local Git object clone, not remote preparation timing",
+      "Same Linux Docker runtime; not native desktop or physical cloud comparison"
+    ],
+    "independentVerification": {
+      "acceptance": "passed",
+      "verification": "macho-header"
+    },
+    "usage": {
+      "inputTokens": 5163,
+      "outputTokens": 1306,
+      "modelRequests": "unknown",
+      "durationMs": 10474,
+      "provider": "deepseek",
+      "model": "deepseek-flash"
+    },
+    "totalExecutionAndVerificationMs": 11547
+  },
+  {
+    "caseId": "B02",
+    "repetition": 2,
+    "taskId": "baseline-20260918-v1-B02-r2",
+    "mode": "direct-local-docker",
+    "preparationMs": 882,
+    "preparationComparable": false,
+    "acceptance": "passed",
+    "limitations": [
+      "Local Git object clone, not remote preparation timing",
+      "Same Linux Docker runtime; not native desktop or physical cloud comparison"
+    ],
+    "independentVerification": {
+      "acceptance": "passed",
+      "verification": "macho-header"
+    },
+    "usage": {
+      "inputTokens": 5616,
+      "outputTokens": 1945,
+      "modelRequests": "unknown",
+      "durationMs": 15186,
+      "provider": "deepseek",
+      "model": "deepseek-flash"
+    },
+    "totalExecutionAndVerificationMs": 15893
+  },
+  {
+    "caseId": "B04",
+    "repetition": 1,
+    "taskId": "baseline-20260918-v1-B04-r1",
+    "mode": "direct-local-docker",
+    "preparationMs": 906,
+    "preparationComparable": false,
+    "acceptance": "passed",
+    "limitations": [
+      "Local Git object clone, not remote preparation timing",
+      "Same Linux Docker runtime; not native desktop or physical cloud comparison"
+    ],
+    "independentVerification": {
+      "acceptance": "passed",
+      "verification": "capture-trim",
+      "testRun": {
+        "exitCode": 0,
+        "output": "✔ capture trims stdout by default (14.143914ms)\n✔ capture with trim:false preserves exact stdout including whitespace (12.288137ms)\n✔ capture with trim:true explicitly trims stdout (14.593546ms)\nℹ tests 3\nℹ suites 0\nℹ pass 3\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 63.571592\n"
+      }
+    },
+    "usage": {
+      "inputTokens": 7305,
+      "outputTokens": 2791,
+      "modelRequests": "unknown",
+      "durationMs": 18164,
+      "provider": "deepseek",
+      "model": "deepseek-flash"
+    },
+    "totalExecutionAndVerificationMs": 18939
+  },
+  {
+    "caseId": "B04",
+    "repetition": 2,
+    "taskId": "baseline-20260918-v1-B04-r2",
+    "mode": "direct-local-docker",
+    "preparationMs": 872,
+    "preparationComparable": false,
+    "acceptance": "passed",
+    "limitations": [
+      "Local Git object clone, not remote preparation timing",
+      "Same Linux Docker runtime; not native desktop or physical cloud comparison"
+    ],
+    "independentVerification": {
+      "acceptance": "passed",
+      "verification": "capture-trim",
+      "testRun": {
+        "exitCode": 0,
+        "output": "✔ capture trims stdout by default (14.10108ms)\n✔ capture trims stdout when trim is explicitly true (13.664824ms)\n✔ capture with trim:false preserves exact stdout whitespace (10.896492ms)\nℹ tests 3\nℹ suites 0\nℹ pass 3\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 61.903151\n"
+      }
+    },
+    "usage": {
+      "inputTokens": 5565,
+      "outputTokens": 3151,
+      "modelRequests": "unknown",
+      "durationMs": 19004,
+      "provider": "deepseek",
+      "model": "deepseek-flash"
+    },
+    "totalExecutionAndVerificationMs": 19758
+  }
+]

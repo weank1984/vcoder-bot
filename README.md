@@ -1,157 +1,114 @@
-# Grok Bot 0.18 — reconstructed and extended
+# Grok Bot 0.18 — 重建与扩展版
 
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 ![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/weank1984/vcoder-bot/check.yml)
 
-![Grok Bot Router settings with Codex selected and local usage totals](docs/assets/router-settings.png)
+![Grok Bot 路由设置界面，已选中 Codex 并显示本地用量统计](docs/assets/router-settings.png)
 
-This repository is an unofficial, source-oriented reconstruction of the
-publicly shipped Grok Bot 0.18.0 macOS app.
+本仓库是对公开发行的 Grok Bot 0.18.0 macOS 应用的**非官方、源码导向的逆向重建**。
 
-The project began as an attempt to understand how the desktop app was put
-together. It now contains readable TypeScript implementations of its Electron,
-host, coordinator, local-execution, protocol, and renderer boundaries, plus a
-deterministic toolchain for turning those sources back into a working macOS
-application.
+项目最初只是为了理解这款桌面应用的构造方式。如今它已包含可读的 TypeScript 实现，覆盖 Electron 主进程、host、协调器(coordinator)、本地执行、协议和渲染层边界，并配有一套确定性(deterministic)工具链，能将这些源码重新构建为可运行的 macOS 应用。
 
-It also adds a few practical experiments:
+此外还加入了一些实用性的实验特性：
 
-- an inference router for Cursor, Claude Code, Codex, and OpenRouter;
-- Grok Bot plugin/MCP tools across the routed providers;
-- local usage tracking for routed inference;
-- an optional local Docker sandbox in place of the remote box; and
-- a reconstructed settings surface integrated into the polished shipped UI.
+- 面向 Cursor、Claude Code、Codex 和 OpenRouter 的推理路由器；
+- 跨路由 provider 的 Grok Bot 插件/MCP 工具；
+- 路由推理的本地用量追踪；
+- 可选的本地 Docker 沙箱，用以替代远程 box；
+- 集成在原版精美 UI 中的重建设置界面。
 
-This is a hacking and research project, not Anysphere's original monorepo and
-not an official Grok Bot release. Names and module boundaries inferred from a
-compiled application may differ from the original source.
+这是一个技术研究项目，**不是** Anysphere 的原始 monorepo，也**不是**官方的 Grok Bot 发行版。从编译产物反推得到的名称和模块边界可能与原始源码有出入。
 
-## What is in the repository?
+## 仓库中有什么？
 
-The checked-in tree contains the reviewed reconstruction, tests, manifests,
-build scripts, and Git LFS preservation copies of the original macOS arm64 and
-Windows x64 installers. It deliberately does **not** commit the extracted
-upstream application, build output, local credentials, or the large forensic
-recovery workspace.
+已提交的目录树包含经过审阅的重建代码、测试、清单(manifests)、构建脚本，以及通过 Git LFS 保存的原始 macOS arm64 和 Windows x64 安装包副本。项目刻意**不**提交解压后的上游应用本体、构建产物、本地凭据，或体积庞大的取证式恢复工作区。
 
-The public Grok Bot 0.18.0 application is instead treated as a pinned build
-input. During bootstrap, the toolchain downloads it, verifies its SHA-256
-identity, and extracts the pieces required to assemble the reconstruction.
+公开发行的 Grok Bot 0.18.0 应用被当作一份"锁定版本的构建输入"处理。在 bootstrap 阶段，工具链会下载该应用、校验其 SHA-256 一致性，并抽取组装重建版所需的部分。
 
-The resulting app is a hybrid by design:
+最终产出的应用是刻意设计成混合体：
 
-- application runtimes are compiled from the readable sources under `source/`;
-- the polished shipped renderer remains the UI baseline;
-- a narrow deterministic transform adds the reconstructed Router settings UI;
-- original and patched renderer chunk hashes are recorded and verified; and
-- the finished app uses a separate bundle identifier and an ad-hoc signature.
+- 应用运行时由 `source/` 下的可读源码编译而成；
+- 精美的原版渲染层(renderer)仍作为 UI 基线保留；
+- 一个范围很窄的确定性变换(transform)添加了重建后的 Router 设置界面；
+- 原始与打过补丁的渲染层代码块哈希均被记录并校验；
+- 最终应用使用独立的 bundle identifier 和 ad-hoc 签名。
 
-The upstream app installed on the machine is never overwritten.
+机器上已安装的上游应用**永远不会被覆盖**。
 
-### Why retain the shipped renderer?
+### 为什么保留原版渲染层？
 
-The distributed application did not include the original frontend source or
-source maps. It contained optimized, minified production JavaScript and CSS
-chunks: enough to inspect behavior and recover contracts, but not the authored
-React components, names, comments, file structure, or design-system source.
+发行版应用并未包含原始前端源码或 source map，只包含经过优化压缩的生产环境 JavaScript 和 CSS 代码块——足以检查行为、恢复契约(contract)，但无法还原出作者编写的 React 组件、命名、注释、文件结构或设计系统源码。
 
-Recreating the complete frontend with the same polish and behavior would have
-been a separate, much larger reverse-engineering project. It was not a realistic
-goal for a weekend build. The practical choice was therefore to reconstruct the
-runtime and control-plane code, retain the checksum-pinned shipped renderer,
-and make the smallest auditable UI patch needed for the new Router settings.
+要以同等的精致度和行为完整重现前端，将是另一个规模大得多的独立逆向工程项目，对于一个"周末项目"而言并不现实。因此实际做出的选择是：重建运行时与控制面代码，保留经过校验和锁定的原版渲染层，并只对新增的 Router 设置做最小、可审计的 UI 补丁。
 
-`frontend/` is a readable partial reconstruction and design workspace. It is
-useful for understanding UI contracts and experimenting with clean components,
-but it should not be mistaken for Anysphere's missing original frontend source
-or a pixel-perfect replacement for the packaged renderer.
+`frontend/` 是一份可读的部分重建及设计工作区，有助于理解 UI 契约、实验干净的组件写法，但不应被误认为是 Anysphere 缺失的原始前端源码，也不是对打包渲染层的像素级完美替代。
 
-## Preserved original installers
+## 保留的原始安装包
 
-Research copies of the exact 0.18.0 installers live under
-`research-archives/original/0.18.0/` and are stored with Git LFS:
+0.18.0 原始安装包的研究副本存放于 `research-archives/original/0.18.0/`，通过 Git LFS 存储：
 
-| Platform | File | SHA-256 |
+| 平台 | 文件 | SHA-256 |
 | --- | --- | --- |
 | macOS arm64 | `macos-arm64/Grok_Bot_0.18.0.dmg` | `a253ccd8aab01e083f9812a0264354c5034d8ba7f0610bbb557e82ae77d203eb` |
 | Windows x64 | `windows-x64/Grok_Bot_0.18.0_Setup.exe` | `464079a15ef5fa8b61ccea8fffcc78f63cfcf6df65fb0ad5e725d8b95f7e437e` |
 
-See [research-archives/README.md](research-archives/README.md) for source URLs,
-sizes, verification commands, and the machine-readable artifact manifest.
+来源 URL、文件大小、校验命令和机器可读的产物清单见 [research-archives/README.md](research-archives/README.md)。
 
-## Current features
+## 当前功能
 
-### Inference Router
+### 推理路由器(Inference Router)
 
-Open **Settings → Router** to choose the backend used for new turns:
+打开 **Settings → Router** 可选择新对话轮次所使用的后端：
 
-| Provider | Authentication | Tool support |
+| Provider | 认证方式 | 工具支持 |
 | --- | --- | --- |
-| Cursor | Existing Grok Bot/Cursor session | Native Grok Bot tools and plugins |
-| Claude Code | Existing Claude Code login | Routed Grok Bot MCP tools |
-| Codex | Existing local ChatGPT/Codex login | Direct Responses transport with Grok Bot tools |
-| VCoder | Existing local VCoder CLI sign-in | Routed Grok Bot MCP tools |
-| OpenRouter | API key saved through the desktop secrets bridge | Grok Bot tool-execution loop |
+| Cursor | 已有的 Grok Bot/Cursor 会话 | 原生 Grok Bot 工具与插件 |
+| Claude Code | 已有的 Claude Code 登录 | 路由后的 Grok Bot MCP 工具 |
+| Codex | 已有的本地 ChatGPT/Codex 登录 | 直连 Responses 传输 + Grok Bot 工具 |
+| VCoder | 已有的本地 VCoder CLI 登录 | 路由后的 Grok Bot MCP 工具 |
+| OpenRouter | 通过桌面端 secrets bridge 保存的 API key | Grok Bot 工具执行循环 |
 
-Cursor is the default. Claude Code and Codex do not require separate API keys
-when their local clients are already authenticated. The application preserves
-streaming responses, thinking state, reactions, rich plugin mentions, and MCP
-tool execution across routed conversations.
+Cursor 为默认选项。Claude Code 和 Codex 在本地客户端已认证的情况下无需额外配置 API key。应用在路由对话中保留了流式响应、思考状态、表情反应、富文本插件提及以及 MCP 工具执行。
 
-When the local Docker sandbox is enabled, VCoder follows the original Grok Bot
-topology: the turn runs inside the box and the host spawns a staged Linux
-VCoder CLI there directly, so file and shell side effects land on the box
-filesystem. Point `SAND_VCODER_BOX_CLI_PATH` at a Linux (x64 baseline)
-`vcoder-cli` build to stage it.
+启用本地 Docker 沙箱后，VCoder 遵循原版 Grok Bot 的拓扑结构：对话轮次在 box 内运行，host 直接在其中启动一个预置的 Linux 版 VCoder CLI，因此文件与 shell 副作用都落在 box 的文件系统上。将 `SAND_VCODER_BOX_CLI_PATH` 指向一个 Linux(x64 baseline) 的 `vcoder-cli` 构建产物即可完成预置。
 
-**Usage & Billing** shows the locally recorded request and token totals for
-providers that return usage data. These figures are activity records, not an
-authoritative provider invoice.
+**Usage & Billing** 展示的是本地记录的请求与 token 用量总计（仅针对会返回用量数据的 provider）。这些数字是活动记录，并非权威的 provider 账单。
 
-### Neutralized defaults
+### 中和后的默认配置
 
-For the public release, runtime connection defaults that pointed at upstream
-Cursor infrastructure were neutralized. Telemetry, the updater, experiment
-flagging, and client identifiers now default to disabled or to reserved
-placeholder values (`*.example.com`). To connect the Cursor route or a
-compatible backend, supply your own configuration as environment variables,
-for example:
+在公开发布版本中，原本指向上游 Cursor 基础设施的运行时连接默认值已被中和处理。遥测、更新器、实验标记以及客户端标识符现默认关闭或指向占位值(`*.example.com`)。若要连接 Cursor 路由或兼容后端，需通过环境变量提供自己的配置，例如：
 
-- `SAND_BACKEND_URL` (or `CURSOR_API_BASE_URL`) — inference/auth backend URL;
-- `SAND_AUTH_CLIENT_ID` — OAuth client ID;
-- `SAND_CURSOR_WEBSITE_URL` (or `CURSOR_WEBSITE_URL`) — portal/website origin;
-- `SAND_SENTRY_DSN` — opt in to error reporting with your own project.
+- `SAND_BACKEND_URL`（或 `CURSOR_API_BASE_URL`）—— 推理/认证后端地址；
+- `SAND_AUTH_CLIENT_ID` —— OAuth client ID；
+- `SAND_CURSOR_WEBSITE_URL`（或 `CURSOR_WEBSITE_URL`）—— 门户/官网 origin；
+- `SAND_SENTRY_DSN` —— 使用自己的项目开启错误上报。
 
-Provider routes that use local sessions (Claude Code, Codex, VCoder, OpenRouter)
-are unaffected.
+使用本地会话的 provider 路由（Claude Code、Codex、VCoder、OpenRouter）不受影响。
 
-### Local Docker sandbox
+### 本地 Docker 沙箱
 
-The Router page also has a **Use local Docker VM** toggle. When enabled, Grok
-Bot runs its box host and execution daemon in an owned local container instead
-of connecting to the remote sandbox.
+Router 页面还有一个 **Use local Docker VM** 开关。启用后，Grok Bot 会在自有的本地容器中运行 box host 和执行守护进程，而不是连接远程沙箱。
 
-The container:
+该容器：
 
-- is bound only to loopback ports;
-- mounts content-addressed host and daemon artifacts read-only;
-- reuses the user's existing provider authentication where needed;
-- is validated before the coordinator connects; and
-- is stopped or replaced through the same settings lifecycle.
+- 仅绑定 loopback 端口；
+- 以只读方式挂载内容寻址的 host 与 daemon 产物；
+- 在需要时复用用户已有的 provider 认证；
+- 在协调器连接前会先经过校验；
+- 通过同一套设置生命周期进行停止或替换。
 
-Docker Desktop, or another compatible local Docker daemon, must be running.
-Remote mode remains the default.
+需要运行 Docker Desktop 或其他兼容的本地 Docker daemon。远程模式仍是默认选项。
 
-## Requirements
+## 环境要求
 
-- macOS on Apple Silicon
+- Apple Silicon 芯片的 macOS
 - Node.js 26.5.x
 - Xcode Command Line Tools
 - Git LFS
-- Docker Desktop (optional, only for the local sandbox)
-- local Claude Code or Codex authentication for those router choices
+- Docker Desktop（可选，仅本地沙箱需要）
+- 若选用对应路由，需要本地已有 Claude Code 或 Codex 认证
 
-## Quick start
+## 快速开始
 
 ```sh
 git clone https://github.com/weank1984/vcoder-bot.git
@@ -165,105 +122,77 @@ npm run package
 open "dist/Grok Bot 0.18 Reconstructed.app"
 ```
 
-`npm run bootstrap` first uses the Git LFS preservation copy of the pinned
-0.18.0 DMG. If that archive is absent, it falls back to the original public URL;
-`GROK_BOT_018_APP` can also point to an existing application copy. Bootstrap
-verifies both the DMG and `app.asar`, caches the matching Electron runtime, and
-hydrates the ignored `src/app/dist` build input.
+`npm run bootstrap` 首先使用 Git LFS 保存的锁定版本 0.18.0 DMG 副本。若该归档不存在，则回退到原始公开下载地址；也可以通过 `GROK_BOT_018_APP` 指向一份已有的应用副本。Bootstrap 会校验 DMG 和 `app.asar`，缓存匹配的 Electron 运行时，并还原被 `.gitignore` 忽略的 `src/app/dist` 构建输入。
 
-`npm run package` compiles the reconstructed runtimes, applies the narrow
-renderer/settings transform, creates the app bundle, assigns the reconstructed
-bundle identity, ad-hoc signs it, and verifies the result. Output is written to:
+`npm run package` 会编译重建后的运行时、应用范围很窄的渲染层/设置变换、创建 app bundle、分配重建后的 bundle identity、进行 ad-hoc 签名，并校验结果。产物输出至：
 
 ```text
 dist/Grok Bot 0.18 Reconstructed.app
 ```
 
-Reconstructed packages disable the upstream updater at the packaging boundary
-and default upstream Sentry and telemetry emission off. Explicitly supplied
-environment configuration is still respected.
+重建版安装包在打包阶段会禁用上游更新器，并默认关闭上游 Sentry 与遥测上报。显式提供的环境变量配置仍会被尊重。
 
-## Architecture
+## 架构
 
 ```text
-polished shipped renderer
+精美的原版渲染层
           │
-          │ desktop preload / RPC
+          │ 桌面端 preload / RPC
           ▼
-     Electron main
+     Electron 主进程
           │
-          ├── settings, secrets, auth and plugin lifecycle
-          ├── remote box connector
-          └── owned local Docker connector
+          ├── 设置、密钥、认证与插件生命周期
+          ├── 远程 box 连接器
+          └── 自有本地 Docker 连接器
                        │
                        ▼
-              coordinator + host
+              协调器(coordinator) + host
                        │
-              inference router
+                 推理路由器
            ┌───────────┼───────────┐
         Cursor      Claude       Codex / OpenRouter
                        │
-                 Grok Bot MCP tools
+                 Grok Bot MCP 工具
 ```
 
-The main source areas are:
+主要源码区域：
 
-- `source/electron-main/` — desktop lifecycle, settings, auth, box connectors,
-  coordinator ownership, and RPC handlers;
-- `source/electron-preload/` — the narrow trusted bridge exposed to the UI;
-- `source/host/` — inference, tools, MCP, settings, and turn execution;
-- `source/node-agent-coordinator/` — transcript routing, streaming activity,
-  reactions, and the routed MCP bridge;
-- `source/shared/` — shared contracts, settings, protocol, and provider helpers;
-- `frontend/` — readable React/TypeScript renderer reconstruction and design
-  workspace;
-- `scripts/` — bootstrap, compilation, renderer patching, packaging, signing,
-  and verification; and
-- `tests/` — publication and router regressions.
+- `source/electron-main/` —— 桌面端生命周期、设置、认证、box 连接器、协调器归属关系及 RPC 处理器；
+- `source/electron-preload/` —— 暴露给 UI 的窄范围可信桥接层；
+- `source/host/` —— 推理、工具、MCP、设置与对话轮次执行；
+- `source/node-agent-coordinator/` —— 会话记录路由、流式活动、表情反应及路由后的 MCP bridge；
+- `source/shared/` —— 共享契约、设置、协议及 provider 辅助逻辑；
+- `frontend/` —— 可读的 React/TypeScript 渲染层重建及设计工作区；
+- `scripts/` —— bootstrap、编译、渲染层打补丁、打包、签名及校验；
+- `tests/` —— 发布与路由回归测试。
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for more detail.
+更多细节参见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
-## Development commands
+## 开发命令
 
 ```sh
-npm test                  # focused regression tests
-npm run typecheck         # renderer TypeScript
-npm run source:typecheck  # runtime TypeScript
-npm run frontend:build    # build the readable renderer reconstruction
-npm run package           # build, sign, and verify the macOS app
-npm run verify            # verify an existing packaged app
-npm run smoke             # bounded native smoke check
-npm run publication:check # prove a fresh-history export is lossless
+npm test                  # 聚焦式回归测试
+npm run typecheck         # 渲染层 TypeScript 类型检查
+npm run source:typecheck  # 运行时 TypeScript 类型检查
+npm run frontend:build    # 构建可读的渲染层重建版本
+npm run package           # 构建、签名并校验 macOS 应用
+npm run verify            # 校验一份已打包的应用
+npm run smoke             # 有限范围的原生冒烟测试
+npm run publication:check # 验证全新历史导出是否无损
 ```
 
-Generated directories including `.cache`, `.build`, `dist`, `src/app/dist`,
-`recovered`, `recovery`, and local probe roots are ignored.
+包括 `.cache`、`.build`、`dist`、`src/app/dist`、`recovered`、`recovery` 以及本地探测根目录在内的生成目录均已忽略。
 
-## Project status
+## 项目状态
 
-The app launches and the core reconstructed flows are usable, including routed
-inference, connected plugins, and the local Docker sandbox. This is still an
-experimental reconstruction: it targets one pinned macOS/arm64 release, depends
-on external provider sessions, and does not promise compatibility with future
-Grok Bot versions.
+应用可以启动，核心重建流程可用，包括路由推理、已连接插件以及本地 Docker 沙箱。这仍是一个实验性重建项目：仅针对一个锁定的 macOS/arm64 版本，依赖外部 provider 会话，不承诺与未来 Grok Bot 版本兼容。
 
-This repository is public and open for contribution, but the project remains an
-unofficial, independent research effort. It is not affiliated with, endorsed
-by, or maintained by Anysphere, Cursor, xAI, or the original Grok Bot team.
+本仓库公开且欢迎贡献，但项目本质仍是一项非官方、独立的研究工作。与 Anysphere、Cursor、xAI 或原版 Grok Bot 团队均无关联、未获其背书，也非由其维护。
 
-For changes, read [CONTRIBUTING.md](CONTRIBUTING.md). For behaviour, see the
-[Code of Conduct](CODE_OF_CONDUCT.md) and [GOVERNANCE.md](GOVERNANCE.md). For
-common questions, see [docs/FAQ.md](docs/FAQ.md). For the clean-history export
-procedure, see [docs/PUBLISHING.md](docs/PUBLISHING.md). Technical provenance
-and retained upstream boundaries are described in [PROVENANCE.md](PROVENANCE.md)
-and [NOTICE.md](NOTICE.md).
+关于变更流程，请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)；关于行为准则，请参见 [Code of Conduct](CODE_OF_CONDUCT.md) 和 [GOVERNANCE.md](GOVERNANCE.md)；常见问题见 [docs/FAQ.md](docs/FAQ.md)；干净历史导出流程见 [docs/PUBLISHING.md](docs/PUBLISHING.md)；技术溯源与保留的上游边界描述见 [PROVENANCE.md](PROVENANCE.md) 和 [NOTICE.md](NOTICE.md)。
 
-## License
+## 许可证
 
-The reconstructed source code in this repository is licensed under the Apache
-License, Version 2.0. See the [LICENSE](LICENSE) file for the full text.
+本仓库中的重建源代码依据 Apache License, Version 2.0 授权，完整文本见 [LICENSE](LICENSE) 文件。
 
-The license covers only original reconstruction work in this repository. The
-preserved upstream installers and the upstream application, trademarks, and
-renderer material are not licensed by this repository — see
-[NOTICE.md](NOTICE.md) and [PROVENANCE.md](PROVENANCE.md).
+该许可证仅覆盖本仓库中的原创重建工作。保留的上游安装包、上游应用本体、商标以及渲染层素材不受本仓库许可证覆盖——详见 [NOTICE.md](NOTICE.md) 和 [PROVENANCE.md](PROVENANCE.md)。

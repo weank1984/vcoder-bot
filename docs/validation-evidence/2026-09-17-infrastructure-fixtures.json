@@ -1,0 +1,80 @@
+{
+  "evidenceVersion": 1,
+  "recordedAt": "2026-09-17",
+  "evidenceClass": "infrastructure-fixture",
+  "warning": "These runs did not invoke a model and must not be counted as VCoder result-quality evidence.",
+  "environment": {
+    "location": "local",
+    "containerRuntime": "Docker via OrbStack",
+    "architecture": "arm64",
+    "repository": "https://github.com/octocat/Hello-World.git",
+    "commit": "7fd1a60b01f91b314f59955a4e4d4e80d8edf11d"
+  },
+  "runs": [
+    {
+      "case": "detached-success",
+      "taskId": "task_08dc5c85-68b3-40bf-b82f-50736ab0ed30",
+      "runId": "run_2d667b42-b1e2-489a-9ac4-d3e7b2494314",
+      "acceptedAt": "2026-09-17T08:48:36.807Z",
+      "workspaceReadyAt": "2026-09-17T08:48:37.714Z",
+      "finishedAt": "2026-09-17T08:48:38.511Z",
+      "outcome": "delivered",
+      "artifactCount": 6,
+      "separateQueryAfterSubmitConnectionClosed": true,
+      "authenticatedArtifactDownloadVerified": true
+    },
+    {
+      "case": "active-stop-with-partial-artifact",
+      "taskId": "task_7c06b7e8-2e1d-4034-978a-075fbc32acee",
+      "runId": "run_9176a3a7-3894-4811-9d01-b8ce1b0786ac",
+      "acceptedAt": "2026-09-17T12:05:35.809Z",
+      "runningAt": "2026-09-17T12:05:36.761Z",
+      "partialWrittenAt": "2026-09-17T12:05:37.595Z",
+      "stopRequestedAt": "2026-09-17T12:05:52.622Z",
+      "finishedAt": "2026-09-17T12:05:57.921Z",
+      "outcome": "cancelled",
+      "terminalReason": "stop requested",
+      "stopLatencyMs": 5299,
+      "partialArtifact": {
+        "filename": "partial-summary.md",
+        "sizeBytes": 196,
+        "sha256": "17c5a69a7d7254d33cdced30dc71a53f3b7be1cc48e2e3574d91cc3db849e898",
+        "authenticatedDownloadVerified": true
+      }
+    },
+    {
+      "case": "wall-clock-timeout-with-partial-artifact",
+      "taskId": "task_e40b8f2a-3648-40aa-97cf-48eb0cb5bbd9",
+      "runId": "run_0ba6bd59-8926-45fd-a048-79a7dcf81fac",
+      "acceptedAt": "2026-09-17T12:06:15.960Z",
+      "runningAt": "2026-09-17T12:06:17.056Z",
+      "partialWrittenAt": "2026-09-17T12:06:17.502Z",
+      "finishedAt": "2026-09-17T12:07:21.304Z",
+      "configuredWallClockMinutes": 1,
+      "observedRunDurationMs": 65344,
+      "outcome": "cancelled",
+      "terminalReason": "wall clock limit reached after 1 minute(s)",
+      "partialArtifact": {
+        "filename": "partial-summary.md",
+        "sizeBytes": 196,
+        "sha256": "c82bfa3a9f7e18573f253e25ad059cf793aca2b83c87d7e90d7c6a1a5a22f6f1",
+        "downloadAfterApiRestartVerified": true
+      }
+    }
+  ],
+  "interpretation": {
+    "proved": [
+      "A task continues after its submit HTTP connection closes.",
+      "A later authenticated request can query and download delivered artifacts.",
+      "An active stop reaches a durable cancelled state and preserves an existing artifact.",
+      "The wall-clock limit terminates the runner and preserves an existing artifact.",
+      "Terminal task state and artifacts survive an API process restart."
+    ],
+    "notProved": [
+      "A real model-backed VCoder task succeeds.",
+      "The behavior is identical on a Linux cloud host.",
+      "A different physical client can retrieve results through HTTPS.",
+      "The user experience is acceptable to non-implementers."
+    ]
+  }
+}

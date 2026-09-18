@@ -1,0 +1,47 @@
+{
+  "evidenceVersion": 1,
+  "recordedAt": "2026-09-17",
+  "purpose": "Prove the local control-plane-to-Docker-runner failure path without model credentials.",
+  "environment": {
+    "location": "local",
+    "containerRuntime": "Docker via OrbStack",
+    "architecture": "arm64",
+    "runnerImage": "vcoder-validation-runner:dev",
+    "credentialsInjected": false
+  },
+  "task": {
+    "taskId": "task_ae5880bf-4dff-469c-b137-4eaad720d9c4",
+    "runId": "run_f918cdd2-a98e-4f51-b0dc-640518f0d8cf",
+    "repository": "https://github.com/weank1984/vcoder-bot.git",
+    "commit": "5e2bc4e535b93e5ca792606c62d266c732fb8adc",
+    "acceptedAt": "2026-09-17T08:39:12.698Z",
+    "workspaceReadyAt": "2026-09-17T08:41:25.787Z",
+    "finishedAt": "2026-09-17T08:41:26.496Z",
+    "outcome": "failed",
+    "expectedFailure": "VALIDATION_VCODER_PROVIDER is required in the runner",
+    "workspaceApproximateMiB": 596
+  },
+  "events": [
+    { "sequence": 1, "type": "task.accepted", "occurredAt": "2026-09-17T08:39:12.698Z" },
+    { "sequence": 2, "type": "run.started", "occurredAt": "2026-09-17T08:39:12.702Z" },
+    { "sequence": 3, "type": "run.stage_changed", "from": "accepted", "to": "preparing", "occurredAt": "2026-09-17T08:39:12.702Z" },
+    { "sequence": 4, "type": "workspace.preparing", "occurredAt": "2026-09-17T08:39:12.704Z" },
+    { "sequence": 5, "type": "workspace.ready", "occurredAt": "2026-09-17T08:41:25.787Z" },
+    { "sequence": 6, "type": "run.stage_changed", "from": "preparing", "to": "running", "occurredAt": "2026-09-17T08:41:25.788Z" },
+    { "sequence": 7, "type": "run.finished", "outcome": "failed", "occurredAt": "2026-09-17T08:41:26.496Z" }
+  ],
+  "interpretation": {
+    "proved": [
+      "Idempotent task acceptance reached durable storage.",
+      "The requested immutable commit was checked out.",
+      "The independent runner container started.",
+      "A missing provider became a durable, user-visible failure."
+    ],
+    "notProved": [
+      "A model-backed VCoder run can complete.",
+      "The chain survives client departure on a cloud host.",
+      "Artifacts are useful to a user.",
+      "The measured preparation time generalizes to other machines or repositories."
+    ]
+  }
+}

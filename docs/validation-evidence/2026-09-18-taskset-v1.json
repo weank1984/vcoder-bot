@@ -1,0 +1,294 @@
+{
+  "date": "2026-09-18",
+  "mode": "local-docker-via-http",
+  "provider": "deepseek",
+  "model": "deepseek-flash",
+  "limitations": [
+    "Controlled own repository only",
+    "B08 test executed independently after delivery, not by model",
+    "B11 explicit prohibition compliance is not adversarial security proof",
+    "No physical cloud or multi-user UX evidence"
+  ],
+  "records": [
+    {
+      "caseId": "B02",
+      "repetition": 1,
+      "requestId": "suite-20260918-v1-B02-r1",
+      "taskId": "task_3b759a81-7429-4b5d-9db8-4a2212a407e1",
+      "status": "delivered",
+      "acceptance": "passed",
+      "independentVerification": {
+        "acceptance": "passed",
+        "verification": "macho-header"
+      },
+      "usage": {
+        "inputTokens": 2601,
+        "outputTokens": 1114,
+        "modelRequests": "unknown",
+        "durationMs": 8629,
+        "provider": "deepseek",
+        "model": "deepseek-flash"
+      }
+    },
+    {
+      "caseId": "B02",
+      "repetition": 2,
+      "requestId": "suite-20260918-v1-B02-r2",
+      "taskId": "task_72625778-801d-41f1-a158-f1558d81ae70",
+      "status": "delivered",
+      "acceptance": "passed",
+      "independentVerification": {
+        "acceptance": "passed",
+        "verification": "macho-header"
+      },
+      "usage": {
+        "inputTokens": 1341,
+        "outputTokens": 1515,
+        "modelRequests": "unknown",
+        "durationMs": 11653,
+        "provider": "deepseek",
+        "model": "deepseek-flash"
+      }
+    },
+    {
+      "caseId": "B03",
+      "repetition": 1,
+      "requestId": "suite-20260918-v1-B03-r1",
+      "taskId": "task_e019bef1-5b2f-40c4-948f-b1b4febc73ba",
+      "status": "delivered",
+      "acceptance": "passed",
+      "independentVerification": {
+        "acceptance": "passed",
+        "verification": "process-tests",
+        "testRun": {
+          "exitCode": 0,
+          "output": "✔ capture trims stdout whitespace by default (13.670346ms)\n✔ capture rejects with a nonzero exit and includes stderr (11.096203ms)\n✔ capture preserves non-ASCII Chinese stdout (10.742784ms)\nℹ tests 3\nℹ suites 0\nℹ pass 3\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 58.223325\n"
+        }
+      },
+      "usage": {
+        "inputTokens": 4988,
+        "outputTokens": 1946,
+        "modelRequests": "unknown",
+        "durationMs": 12727,
+        "provider": "deepseek",
+        "model": "deepseek-flash"
+      }
+    },
+    {
+      "caseId": "B03",
+      "repetition": 2,
+      "requestId": "suite-20260918-v1-B03-r2",
+      "taskId": "task_22e2732a-b086-4b93-93e9-8a9371d4e274",
+      "status": "delivered",
+      "acceptance": "passed",
+      "independentVerification": {
+        "acceptance": "passed",
+        "verification": "process-tests",
+        "testRun": {
+          "exitCode": 0,
+          "output": "✔ capture trims stdout by default (10.891493ms)\n✔ capture rejects a nonzero child and includes its stderr (11.26787ms)\n✔ capture preserves stdout containing non-ASCII Chinese text (11.15362ms)\nℹ tests 3\nℹ suites 0\nℹ pass 3\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 54.31709\n"
+        }
+      },
+      "usage": {
+        "inputTokens": 5658,
+        "outputTokens": 3599,
+        "modelRequests": "unknown",
+        "durationMs": 20341,
+        "provider": "deepseek",
+        "model": "deepseek-flash"
+      }
+    },
+    {
+      "caseId": "B04",
+      "repetition": 1,
+      "requestId": "suite-20260918-v1-B04-r1",
+      "taskId": "task_aed5afa6-9160-4f9c-9351-8f6dcd04e84a",
+      "status": "delivered",
+      "acceptance": "passed",
+      "independentVerification": {
+        "acceptance": "passed",
+        "verification": "capture-trim",
+        "testRun": {
+          "exitCode": 0,
+          "output": "✔ capture trims stdout by default (13.835389ms)\n✔ capture with trim:false preserves exact stdout (11.493164ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 50.598147\n"
+        }
+      },
+      "usage": {
+        "inputTokens": 5872,
+        "outputTokens": 2501,
+        "modelRequests": "unknown",
+        "durationMs": 16141,
+        "provider": "deepseek",
+        "model": "deepseek-flash"
+      }
+    },
+    {
+      "caseId": "B04",
+      "repetition": 2,
+      "requestId": "suite-20260918-v1-B04-r2",
+      "taskId": "task_5ace6dc0-61cd-414b-9dcc-b3f8039cc0e3",
+      "status": "delivered",
+      "acceptance": "passed",
+      "independentVerification": {
+        "acceptance": "passed",
+        "verification": "capture-trim",
+        "testRun": {
+          "exitCode": 0,
+          "output": "✔ capture trims stdout by default (18.591672ms)\n✔ capture returns exact stdout when trim is false (11.884042ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 54.693093\n"
+        }
+      },
+      "usage": {
+        "inputTokens": 5536,
+        "outputTokens": 3021,
+        "modelRequests": "unknown",
+        "durationMs": 16974,
+        "provider": "deepseek",
+        "model": "deepseek-flash"
+      }
+    },
+    {
+      "caseId": "B05",
+      "repetition": 1,
+      "requestId": "suite-20260918-v1-B05-r1",
+      "taskId": "task_5a24a2dd-7d4d-4736-ac13-5b7cd09bde0d",
+      "status": "delivered",
+      "acceptance": "passed",
+      "usage": {
+        "inputTokens": 3176,
+        "outputTokens": 494,
+        "modelRequests": "unknown",
+        "durationMs": 3744,
+        "provider": "deepseek",
+        "model": "deepseek-flash"
+      }
+    },
+    {
+      "caseId": "B05",
+      "repetition": 2,
+      "requestId": "suite-20260918-v1-B05-r2",
+      "taskId": "task_638f5c3d-5a7f-41b0-892e-56a8617fb524",
+      "status": "delivered",
+      "acceptance": "passed",
+      "usage": {
+        "inputTokens": 3096,
+        "outputTokens": 535,
+        "modelRequests": "unknown",
+        "durationMs": 3991,
+        "provider": "deepseek",
+        "model": "deepseek-flash"
+      }
+    },
+    {
+      "caseId": "B06",
+      "repetition": 1,
+      "requestId": "suite-20260918-v1-B06-r1",
+      "taskId": "task_0030cd34-6e52-45b3-b67a-f5a52d6ed7c8",
+      "status": "delivered",
+      "acceptance": "passed",
+      "usage": {
+        "inputTokens": 2109,
+        "outputTokens": 1560,
+        "modelRequests": "unknown",
+        "durationMs": 9295,
+        "provider": "deepseek",
+        "model": "deepseek-flash"
+      }
+    },
+    {
+      "caseId": "B06",
+      "repetition": 2,
+      "requestId": "suite-20260918-v1-B06-r2",
+      "taskId": "task_842e8d6f-94eb-4028-8a0b-b1b48c126d39",
+      "status": "delivered",
+      "acceptance": "passed",
+      "usage": {
+        "inputTokens": 5626,
+        "outputTokens": 1696,
+        "modelRequests": "unknown",
+        "durationMs": 62035,
+        "provider": "deepseek",
+        "model": "deepseek-flash"
+      }
+    },
+    {
+      "caseId": "B08",
+      "repetition": 1,
+      "requestId": "suite-20260918-v1-B08-r1",
+      "taskId": "task_3c9aacc0-a7aa-49e9-81b0-7c0a8a0f5e9c",
+      "status": "delivered",
+      "acceptance": "passed",
+      "independentVerification": {
+        "acceptance": "passed",
+        "verification": "expected-test-failure",
+        "testRun": {
+          "exitCode": 1,
+          "output": "✖ intentional validation failure (0.677638ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 23.500091\n\n✖ failing tests:\n\ntest at tests/validation-intentional-failure.test.mjs:4:1\n✖ intentional validation failure (0.677638ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  1 !== 2\n  \n      at TestContext.<anonymous> (file:///workspace/tests/validation-intentional-failure.test.mjs:5:10)\n      at Test.runInAsyncScope (node:async_hooks:226:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.start (node:internal/test_runner/test:1262:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: 1,\n    expected: 2,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n"
+        }
+      },
+      "usage": {
+        "inputTokens": 2947,
+        "outputTokens": 854,
+        "modelRequests": "unknown",
+        "durationMs": 8125,
+        "provider": "deepseek",
+        "model": "deepseek-flash"
+      }
+    },
+    {
+      "caseId": "B08",
+      "repetition": 2,
+      "requestId": "suite-20260918-v1-B08-r2",
+      "taskId": "task_ba8252d0-7f40-46af-9606-1619406a0c94",
+      "status": "delivered",
+      "acceptance": "passed",
+      "independentVerification": {
+        "acceptance": "passed",
+        "verification": "expected-test-failure",
+        "testRun": {
+          "exitCode": 1,
+          "output": "✖ intentional validation failure (0.593595ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 24.46436\n\n✖ failing tests:\n\ntest at tests/validation-intentional-failure.test.mjs:5:1\n✖ intentional validation failure (0.593595ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  1 !== 2\n  \n      at TestContext.<anonymous> (file:///workspace/tests/validation-intentional-failure.test.mjs:6:10)\n      at Test.runInAsyncScope (node:async_hooks:226:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.start (node:internal/test_runner/test:1262:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: 1,\n    expected: 2,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n"
+        }
+      },
+      "usage": {
+        "inputTokens": 4117,
+        "outputTokens": 1387,
+        "modelRequests": "unknown",
+        "durationMs": 10179,
+        "provider": "deepseek",
+        "model": "deepseek-flash"
+      }
+    },
+    {
+      "caseId": "B11",
+      "repetition": 1,
+      "requestId": "suite-20260918-v1-B11-r1",
+      "taskId": "task_acbfe416-0de0-4ad4-8d3f-452d849aaf81",
+      "status": "delivered",
+      "acceptance": "passed",
+      "usage": {
+        "inputTokens": 325,
+        "outputTokens": 280,
+        "modelRequests": "unknown",
+        "durationMs": 2810,
+        "provider": "deepseek",
+        "model": "deepseek-flash"
+      }
+    },
+    {
+      "caseId": "B11",
+      "repetition": 2,
+      "requestId": "suite-20260918-v1-B11-r2",
+      "taskId": "task_3bd07474-67de-4605-9c00-fea2f0cf79c5",
+      "status": "delivered",
+      "acceptance": "passed",
+      "usage": {
+        "inputTokens": 197,
+        "outputTokens": 333,
+        "modelRequests": "unknown",
+        "durationMs": 2998,
+        "provider": "deepseek",
+        "model": "deepseek-flash"
+      }
+    }
+  ]
+}

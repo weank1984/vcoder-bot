@@ -1,0 +1,119 @@
+{
+  "caseId": "B07",
+  "result": "passed-expected-preparation-failure",
+  "modelExecutionObserved": false,
+  "snapshot": {
+    "task": {
+      "taskId": "task_d5badcd4-b4f5-476c-a2db-035eea1a6b8b",
+      "status": "failed",
+      "version": 3,
+      "input": {
+        "requestId": "b07-missing-commit-r1",
+        "repository": {
+          "url": "https://github.com/weank1984/vcoder-bot.git",
+          "commit": "0000000000000000000000000000000000000000"
+        },
+        "goal": "Validation B07: this deliberately nonexistent commit must fail during repository preparation. Do not invoke a model or mutate a remote repository.",
+        "acceptanceCriteria": [
+          "Task ends failed during preparation",
+          "Failure reason is persisted",
+          "No model usage or delivered artifacts"
+        ],
+        "limits": {
+          "wallClockMinutes": 1,
+          "maxTurns": 1
+        },
+        "allowedOperations": [
+          "workspace_write",
+          "test"
+        ]
+      },
+      "acceptedAt": "2026-09-18T06:51:09.668Z",
+      "updatedAt": "2026-09-18T06:51:10.740Z",
+      "terminalReason": "git fetch --quiet --depth=1 --no-tags origin 0000000000000000000000000000000000000000 failed (128): fatal: remote error: upload-pack: not our ref 0000000000000000000000000000000000000000"
+    },
+    "runs": [
+      {
+        "runId": "run_97255617-f440-4735-b3eb-1aa7ef2ea242",
+        "taskId": "task_d5badcd4-b4f5-476c-a2db-035eea1a6b8b",
+        "attempt": 1,
+        "status": "failed",
+        "workerId": "worker_32490792-3c31-41eb-9cd8-49ccff3b2dc5",
+        "startedAt": "2026-09-18T06:51:09.673Z",
+        "updatedAt": "2026-09-18T06:51:10.740Z",
+        "finishedAt": "2026-09-18T06:51:10.740Z",
+        "detail": "git fetch --quiet --depth=1 --no-tags origin 0000000000000000000000000000000000000000 failed (128): fatal: remote error: upload-pack: not our ref 0000000000000000000000000000000000000000"
+      }
+    ],
+    "artifacts": [],
+    "events": [
+      {
+        "eventId": "bb4e4d34-95e3-4958-ab65-bb3320be3d2e",
+        "taskId": "task_d5badcd4-b4f5-476c-a2db-035eea1a6b8b",
+        "sequence": 1,
+        "type": "task.accepted",
+        "occurredAt": "2026-09-18T06:51:09.668Z",
+        "payload": {
+          "repository": {
+            "url": "https://github.com/weank1984/vcoder-bot.git",
+            "commit": "0000000000000000000000000000000000000000"
+          },
+          "limits": {
+            "wallClockMinutes": 1,
+            "maxTurns": 1
+          }
+        }
+      },
+      {
+        "eventId": "8d6c87af-6a6c-4508-8224-4fdcd51585b1",
+        "taskId": "task_d5badcd4-b4f5-476c-a2db-035eea1a6b8b",
+        "sequence": 2,
+        "type": "run.started",
+        "occurredAt": "2026-09-18T06:51:09.673Z",
+        "payload": {
+          "runId": "run_97255617-f440-4735-b3eb-1aa7ef2ea242",
+          "workerId": "worker_32490792-3c31-41eb-9cd8-49ccff3b2dc5",
+          "attempt": 1
+        }
+      },
+      {
+        "eventId": "c6d09c4a-2965-44db-a6a9-a688ac053a0c",
+        "taskId": "task_d5badcd4-b4f5-476c-a2db-035eea1a6b8b",
+        "sequence": 3,
+        "type": "run.stage_changed",
+        "occurredAt": "2026-09-18T06:51:09.673Z",
+        "payload": {
+          "runId": "run_97255617-f440-4735-b3eb-1aa7ef2ea242",
+          "from": "accepted",
+          "to": "preparing"
+        }
+      },
+      {
+        "eventId": "3a011b48-2ec6-4a20-be32-b6a65a6b9d40",
+        "taskId": "task_d5badcd4-b4f5-476c-a2db-035eea1a6b8b",
+        "sequence": 4,
+        "type": "workspace.preparing",
+        "occurredAt": "2026-09-18T06:51:09.675Z",
+        "payload": {
+          "runId": "run_97255617-f440-4735-b3eb-1aa7ef2ea242",
+          "repository": "https://github.com/weank1984/vcoder-bot.git",
+          "commit": "0000000000000000000000000000000000000000"
+        }
+      },
+      {
+        "eventId": "cecf5f80-d10c-42a4-aacb-674b01bf5085",
+        "taskId": "task_d5badcd4-b4f5-476c-a2db-035eea1a6b8b",
+        "sequence": 5,
+        "type": "run.finished",
+        "occurredAt": "2026-09-18T06:51:10.740Z",
+        "payload": {
+          "runId": "run_97255617-f440-4735-b3eb-1aa7ef2ea242",
+          "outcome": "failed",
+          "durationMs": 1067,
+          "errorClass": "preparation",
+          "detail": "git fetch --quiet --depth=1 --no-tags origin 0000000000000000000000000000000000000000 failed (128): fatal: remote error: upload-pack: not our ref 0000000000000000000000000000000000000000"
+        }
+      }
+    ]
+  }
+}

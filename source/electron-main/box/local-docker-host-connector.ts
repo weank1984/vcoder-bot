@@ -23,13 +23,15 @@ export const LOCAL_DOCKER_SCHEMA_VERSION = "7";
 // CLI executor used to — so settings.json is still staged and mounted, just
 // without VCODER_BOX_CLI_ENV or the CLI binary path.
 const READY_TIMEOUT_MS = 180_000;
-// deepseek-v4.1-flash is served by the Voyah gateway only. Without an
-// explicit provider, VCoder's settings resolution picks another channel and
-// the request fails with model_not_found (verified 2026-09-30); the direct
-// DeepSeek API rejects this ID too. So the provider is pinned alongside the
-// model. Override either with SAND_VCODER_PROVIDER / SAND_VCODER_MODEL.
-export const DEFAULT_BOX_VCODER_PROVIDER = "voyah";
-export const DEFAULT_BOX_VCODER_MODEL = "deepseek-v4.1-flash";
+// DeepSeek's official Anthropic endpoint (VCoder's built-in "deepseek"
+// provider, credential DEEPSEEK_AUTH_TOKEN). Chosen over the Voyah gateway
+// because the gateway corrupts images inside tool_result blocks in its
+// Anthropic→OpenAI conversion, which blinds computer-use screenshots
+// (verified 2026-09-30 with solid-colour probes). The official endpoint
+// accepts deepseek-v4-flash (VCoder's registry ID) and serves it as such.
+// Override with SAND_VCODER_PROVIDER / SAND_VCODER_MODEL.
+export const DEFAULT_BOX_VCODER_PROVIDER = "deepseek";
+export const DEFAULT_BOX_VCODER_MODEL = "deepseek-v4-flash";
 const OPTIONAL_CREDENTIAL_TIMEOUT_MS = 3_000;
 
 export interface LocalDockerStatus {

@@ -5,6 +5,7 @@ import {
   createComputerTool,
   createScreenshotTool,
   type ComputerToolDependencies,
+  type ComputerUseResult,
 } from "../../runner/tools/sand-computer-tool.js";
 
 // A per-turn, loopback-only MCP server that hands the vcoder CLI the same
@@ -12,6 +13,26 @@ import {
 // routed through the same box computer-use executor (createHostComputerToolDependencies).
 // Modeled on node-agent-coordinator/routed-mcp-bridge.ts: JSON-RPC over a
 // single-use POST path keyed by a random secret, tools/list + tools/call only.
+
+// Returns the screenshot inline so the model actually sees the screen.
+// Previously only the text summary ("Screenshot saved to <file>") came back;
+// the file lives under /home/box/sand-data/agents/…, outside VCoder's allowed
+// workspace, so Read was refused and the model burned 2–3 extra tool calls per
+// step copying it into /workspace first. The block uses the Anthropic
+// image shape ({type:"image", source:{type:"base64", media_type, data}}), the
+// same shape VCoder's own Read tool produces: VCoder passes array MCP result
+// content through to the model verbatim (vcoder-core.ts toMcpToolResultContent
+// → tool_result content), so MCP's native {data, mimeType} shape would reach
+// the provider unconverted.
+export function withScreenshotImage(summary: string, result: ComputerUseResult): Array<Record<string, unknown>> {
+  const blocks: Array<Record<string, unknown>> = [{ type: "text", text: summary }];
+  if (result.result.case !== "success") return blocks;
+  const screenshot = (result.result.value as { screenshot?: unknown } | undefined)?.screenshot;
+  if (typeof screenshot === "string" && screenshot.length > 0) {
+    blocks.push({ type: "image", source: { type: "base64", media_type: "image/webp", data: screenshot } });
+  }
+  return blocks;
+}
 
 function record(value: unknown): Record<string, any> | null {
   return typeof value === "object" && value != null && !Array.isArray(value) ? value as Record<string, any> : null;
@@ -70,12 +91,12 @@ export async function createVcoderComputerMcpBridge<Context>(
         const { context, screenshotTool, computerTool } = tools();
         if (name === "screenshot") {
           const result = await screenshotTool.execute({}, { context, toolCallId });
-          reply({ content: [{ type: "text", text: screenshotTool.render(result).content }] });
+          reply({ content: withScreenshotImage(screenshotTool.render(result).content, result) });
           return;
         }
         if (name === "computer") {
           const result = await computerTool.execute(args, { context, toolCallId });
-          reply({ content: [{ type: "text", text: computerTool.render(result).content }] });
+          reply({ content: withScreenshotImage(computerTool.render(result).content, result) });
           return;
         }
         reply({ isError: true, content: [{ type: "text", text: `Unknown computer-use tool: ${String(name)}` }] });

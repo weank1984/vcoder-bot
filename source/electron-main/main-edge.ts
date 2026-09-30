@@ -7,6 +7,7 @@ import { isValidIanaTimeZone } from "../shared/timezone.js";
 import { sandWebauthnProxyMirroredEnablement } from "../shared/webauthn-proxy-availability.js";
 import { reportDesktopEdgeFailure } from "./desktop-edge-failures.js";
 import { isSandInferenceProvider } from "../shared/inference-router.js";
+import { backgroundTaskRequest } from "./background-tasks.js";
 import { getLocalInferenceCliStatus } from "../shared/node/inference-router-local.js";
 import { isSandBoxRuntime } from "../shared/box-runtime.js";
 import { getLocalDockerStatus, startLocalDockerBox, stopLocalDockerBox } from "./box/local-docker-host-connector.js";
@@ -85,6 +86,7 @@ function parseAgentModel(value: unknown, requireNonWhitespaceId: boolean): { mod
 
 export function createMainEdgeHandlers(deps: MainEdgeDeps): HandlerMap {
   const handlers: HandlerMap = {
+    backgroundTasks: (raw) => backgroundTaskRequest(raw),
     getUpdateStatus: () => invoke(updateService(deps), "getStatus"),
     checkForUpdates: () => invoke(updateService(deps), "checkForUpdates", { trigger: "explicit" }),
     setUpdateTrack: (raw) => { const { track } = req(raw); const service = updateService(deps); return track === null ? invoke(service, "setTrackOverride", null) : isSandUpdateTrack(track) ? invoke(service, "setTrackOverride", track) : invoke(service, "getStatus"); },

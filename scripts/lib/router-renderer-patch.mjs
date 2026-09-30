@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { buildBackgroundTasksRenderer } from "./background-tasks-renderer.mjs";
 
 const REGISTRY_BEFORE = 'const wDn=[{id:"general",label:"General",icon:"settings-gear"},{id:"usage",label:"Usage & Billing",icon:"chart-bars"},{id:"beta",label:"Updates",icon:"cloud-download"}]';
 const REGISTRY_AFTER = 'const wDn=[{id:"general",label:"General",icon:"settings-gear"},{id:"router",label:"Router",icon:"git-branch"},{id:"usage",label:"Usage & Billing",icon:"chart-bars"},{id:"beta",label:"Updates",icon:"cloud-download"}]';
@@ -70,12 +69,14 @@ export async function applyOriginalRendererRouterPatch({ stageRoot }) {
     throw new Error(`Expected one original Settings registry and panel chunk, found ${registryCandidates.length}/${panelCandidates.length}.`);
   }
   const changes = [];
-  const backgroundTasks = await buildBackgroundTasksRenderer();
   for (const [role, candidate, transform] of [
     ["registry", registryCandidates[0], patchOriginalSettingsRegistry],
     ["panel", panelCandidates[0], patchOriginalSettingsPanel],
   ]) {
-    const patched = transform(candidate.source) + (role === "registry" ? `\n;${backgroundTasks}` : "");
+    // The background-tasks panel (source/desktop-tasks/panel.js) is no longer
+    // injected: its composer button crowded the message input and its fixed
+    // launcher overlapped the conversation. The main-process RPC stays.
+    const patched = transform(candidate.source);
     await writeFile(candidate.target, patched);
     changes.push({
       role,
@@ -88,7 +89,7 @@ export async function applyOriginalRendererRouterPatch({ stageRoot }) {
     schemaVersion: 1,
     mode: "original-renderer-settings-extension",
     chunks: changes,
-    features: ["settings-router-provider", "settings-local-docker-vm", "usage-current-provider", "conversation-background-tasks"],
+    features: ["settings-router-provider", "settings-local-docker-vm", "usage-current-provider"],
     transformations: ["settings-registry", "router-panel", "usage-panel"],
   };
   const provenancePath = path.join(stageRoot, "dist", "renderer-router-extension.json");

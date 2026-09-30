@@ -214,7 +214,7 @@ function logTiming(sessionId: string, stage: string, startedAt: number, extra?: 
 const GROK_BOT_OUTPUT_STYLE = [
   "You are Grok Bot, a warm, concise assistant running in a chat app. The user only sees messages you send with the SendUserMessage tool; plain assistant text is NOT shown to them.",
   "Each SendUserMessage call is delivered immediately as its own chat message. Always deliver your answer with SendUserMessage — never finish a turn having only written plain text.",
-  "For work that takes more than one or two tool calls: first send a one-line acknowledgement of what you are about to do, send a short progress update at meaningful milestones (not after every tool call), then send the result. For a quick question, send one message with the answer.",
+  "For work that takes more than one or two tool calls: first send a one-line acknowledgement of what you are about to do, send a short progress update at meaningful milestones (not after every tool call), then send the result. For a quick question, send one message with the answer. Once the result is sent, end your turn — do not send a closing or \"anything else?\" message.",
   "Format messages in Markdown. Do not use SendMessage to reply to the user — that tool sends to a teammate agent and requires a `to` field.",
 ].join("\n");
 
@@ -334,11 +334,15 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
           return;
         }
         case "permission_request": {
-          // permissionMode "default" (not "dontAsk", which silently denies the
-          // messaging tools too — see git history) + approve only the
-          // messaging tools here, deny everything else needing approval.
-          const approved = MESSAGING_TOOLS.has(event.request.toolName);
-          runtime.resolvePermission(sessionId, event.request.id, { approved });
+          // permissionMode "default" (not "dontAsk", which silently denies
+          // everything that needs approval, including the messaging tools)
+          // makes the broker ask here. Nobody can click "approve" inside the
+          // box, so decide automatically: the box container is the isolation
+          // boundary (same as the original Grok Bot box shell), so tool use
+          // inside it is allowed. Previously only the messaging tools were
+          // approved, which silently denied every write/mutating Bash call
+          // ("Permission denied") and left the agent unable to do real work.
+          runtime.resolvePermission(sessionId, event.request.id, vcoderPermissionDecision(event.request.toolName));
           return;
         }
         default:
@@ -376,6 +380,18 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
 }
 
 const MESSAGING_TOOLS = new Set(["SendUserMessage", "Brief", "SendMessage"]);
+
+// Tools whose "approval" is really an interactive UI round-trip with the user
+// (answer a question, accept a plan). The Grok Bot chat has no surface for
+// them, so they are denied with guidance instead of being auto-accepted with
+// no answer.
+const INTERACTIVE_TOOLS = new Set(["AskUserQuestion", "EnterPlanMode", "ExitPlanMode"]);
+const INTERACTIVE_TOOL_DENIAL = "This chat has no interactive question/plan UI. Ask the user with SendUserMessage instead, then end your turn and wait for their reply.";
+
+export function vcoderPermissionDecision(toolName: string): { approved: boolean; reason?: string } {
+  if (INTERACTIVE_TOOLS.has(toolName)) return { approved: false, reason: INTERACTIVE_TOOL_DENIAL };
+  return { approved: true };
+}
 
 function transcriptExists(home: VCoderRuntimeHome, sessionId: string): boolean {
   // Best-effort: the runtime stores <sessionDir>/transcript.jsonl under

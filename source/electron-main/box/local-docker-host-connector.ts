@@ -23,6 +23,12 @@ export const LOCAL_DOCKER_SCHEMA_VERSION = "7";
 // CLI executor used to — so settings.json is still staged and mounted, just
 // without VCODER_BOX_CLI_ENV or the CLI binary path.
 const READY_TIMEOUT_MS = 180_000;
+// deepseek-v4.1-flash is served by the Voyah gateway only. Without an
+// explicit provider, VCoder's settings resolution picks another channel and
+// the request fails with model_not_found (verified 2026-09-30); the direct
+// DeepSeek API rejects this ID too. So the provider is pinned alongside the
+// model. Override either with SAND_VCODER_PROVIDER / SAND_VCODER_MODEL.
+export const DEFAULT_BOX_VCODER_PROVIDER = "voyah";
 export const DEFAULT_BOX_VCODER_MODEL = "deepseek-v4.1-flash";
 const OPTIONAL_CREDENTIAL_TIMEOUT_MS = 3_000;
 
@@ -251,6 +257,7 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
       // selection; this mount only supplies the credential env block that
       // renderVCoderRuntimeSettings() copies over via readVCoderSettingsEnv().
       "--env", `SAND_VCODER_MODEL=${process.env.SAND_VCODER_MODEL?.trim() || DEFAULT_BOX_VCODER_MODEL}`,
+      "--env", `SAND_VCODER_PROVIDER=${process.env.SAND_VCODER_PROVIDER?.trim() || DEFAULT_BOX_VCODER_PROVIDER}`,
       ...(inferenceCredential == null ? [] : ["--env", "SAND_DEV_INFERENCE_TOKEN_FILE=/run/grok-bot/inference.json", "--env", `SAND_BACKEND_URL=${inferenceCredential.backendUrl}`]),
       "--publish", "127.0.0.1:1337:1337", "--publish", "127.0.0.1:1339:1339", "--publish", "127.0.0.1:1340:1340",
       "--publish", "127.0.0.1:6080:6080", "--publish", "127.0.0.1:6081:6081", "--publish", "127.0.0.1:8790:8790",

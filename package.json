@@ -28,6 +28,7 @@
     "typecheck": "tsc --project frontend/tsconfig.json",
     "source:typecheck": "tsc --project source/tsconfig.json",
     "validation:build": "node scripts/build-validation-cloud.mjs",
+    "validation:check-deployment": "node scripts/check-validation-deployment.mjs",
     "validation:build-runner-image": "docker build -f deploy/validation-cloud/runner.Dockerfile -t vcoder-validation-runner:dev .",
     "validation:start": "node .build/validation-cloud/server.cjs",
     "verify": "node scripts/verify.mjs"

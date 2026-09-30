@@ -21,6 +21,10 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Run source and publication checks
         run: npm run check
+      - name: Build the validation cloud bundles
+        run: npm run validation:build
+      - name: Run validation cloud control-plane tests
+        run: node --test tests/validation-cloud-control-plane.test.mjs
       - name: Build the editable frontend
         run: npm run frontend:build
       - name: Verify a fresh clean-history export is lossless

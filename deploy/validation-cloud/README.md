@@ -9,18 +9,36 @@
 - 创建无登录 shell 的 `vcoder-validation` 用户，并允许它访问 Docker socket。Docker 组等价于高权限；该主机不得混跑其他敏感工作负载。
 - `/opt/vcoder-bot` 放置固定 commit 的代码，`/var/lib/vcoder-validation` 独占持久盘或目录。
 
-## 构建
+## 构建与发布身份
+
+每次部署都必须从固定 commit 生成，并保存以下非敏感身份信息：代码 commit、Node/npm/Docker 版本、`build-manifest.json` 中的 bundle SHA-256，以及 runner 镜像的 immutable digest。不要只记录 `:dev` 标签。
 
 在 `/opt/vcoder-bot`：
 
 ```sh
-npm ci
+npm ci --no-audit --no-fund
 npm run check
 npm run validation:build
 npm run validation:build-runner-image
+
+docker image inspect vcoder-validation-runner:dev --format '{{index .RepoDigests 0}}'
 ```
 
-记录代码 commit、runner 镜像 ID、Node/Docker 版本和检查输出。镜像必须在目标 amd64 主机重新构建；本地 arm64 smoke 不能替代它。
+镜像必须在目标 amd64 主机重新构建；本地 arm64 smoke 不能替代它。构建完成后，将 `.build/validation-cloud/` 作为当前发布目录的一部分保留，至少包含 `server.cjs`、`runner.cjs`、source maps 和 `build-manifest.json`。发布目录不得包含 env 文件、SQLite、workspace 或 artifacts。
+
+部署前，将两个 env 文件放到目标主机并执行：
+
+```sh
+node scripts/check-validation-deployment.mjs \
+  --control-env /etc/vcoder-validation/control.env \
+  --runner-env /etc/vcoder-validation/runner.env
+```
+
+该检查会 fail-closed 验证 `0600` 普通文件、loopback 绑定、`vcoder-docker` executor、非占位 provider 和 bundle manifest；它不会打印令牌或模型凭据。
+
+建议将发布目录按 commit 保存，例如 `/opt/vcoder-bot-releases/<commit>/`，再让 `/opt/vcoder-bot` 指向当前发布目录。切换前停止服务或使用原子 symlink 替换；保留至少一个上一版本，回滚时只切回上一版本并重启服务，不删除 `/var/lib/vcoder-validation`。
+
+回滚条件包括 bundle manifest 校验失败、runner digest 不匹配、health 检查失败、首条 B01 违反验收条件或发现越权副作用。回滚后保留事件和产物用于调查，并撤销本次专用凭据。
 
 ## 配置
 

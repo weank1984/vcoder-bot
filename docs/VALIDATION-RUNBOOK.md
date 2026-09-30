@@ -119,12 +119,30 @@ Authorization: Bearer <VALIDATION_CLOUD_TOKEN>
 - 已交付、失败、取消或中断的任务不会被旧事件重新打开。
 - 当前没有自动重试；后续重试必须创建新 Run，并保留前一次记录。
 
+## 发布、部署与回滚顺序
+
+按以下顺序执行，不跳过失败门：
+
+```text
+固定 commit → npm ci → check → validation:build → runner image build
+→ 记录 build-manifest 和 image digest → 部署前 env 检查
+→ 安装/切换发布目录 → systemd 启动 → loopback health/API smoke
+→ 首条 B01 → 观察 → 扩大试点
+```
+
+发布目录按 commit 保存，`/opt/vcoder-bot` 只指向当前版本；保留上一版本用于回滚。回滚只切回旧发布目录并重启 `vcoder-validation`，不得删除 `/var/lib/vcoder-validation` 中的 SQLite、事件或 artifacts。发现凭据泄漏、宿主路径可见、未授权网络/写入、runner digest 错配或 B01 失败时立即停止服务和相关容器，撤销专用凭据，保留脱敏证据后再决定是否恢复。
+
 ## 验证命令
 
 ```sh
 npm run source:typecheck
 node --test tests/validation-cloud-control-plane.test.mjs
 npm run validation:build
+node scripts/check-validation-deployment.mjs \
+  --control-env /etc/vcoder-validation/control.env \
+  --runner-env /etc/vcoder-validation/runner.env
 ```
+
+`check-validation-deployment.mjs` 只做本机只读检查，不启动服务、不访问 provider，也不会打印秘密。Docker runner 镜像必须另外记录不可变 digest；`:dev` 标签不能作为发布身份。
 
 HTTP 契约测试需要绑定本机 loopback 端口；受限沙箱内运行时可能需要相应授权。

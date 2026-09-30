@@ -221,6 +221,19 @@ const GROK_BOT_OUTPUT_STYLE = [
 export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurnOptions): VCoderRuntimeTurnHandle {
   const queue = new RuntimeEventQueue();
   const pendingToolNames = new Map<string, string>();
+  // Long-running tools (a multi-minute test suite, a build) otherwise look
+  // exactly like a hang in the chat. Re-announce them with elapsed time.
+  const pendingToolStarts = new Map<string, { readonly name: string; readonly detail: string | undefined; readonly at: number }>();
+  const heartbeat = setInterval(() => {
+    const now = Date.now();
+    for (const [id, tool] of pendingToolStarts) {
+      const seconds = Math.round((now - tool.at) / 1000);
+      if (seconds < TOOL_HEARTBEAT_MS / 1000) continue;
+      const elapsed = seconds >= 60 ? `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒` : `${seconds} 秒`;
+      queue.push({ type: "tool-activity", toolCallId: id, toolName: tool.name, phase: "started", detail: `（已运行 ${elapsed}）${tool.detail ?? ""}` });
+    }
+  }, TOOL_HEARTBEAT_MS);
+  heartbeat.unref?.();
   // Plain text per model request, kept only as a fallback reply if the model
   // never calls SendUserMessage in this turn. Separate requests are joined
   // with a blank line instead of being glued together.
@@ -303,6 +316,7 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
           pendingToolNames.set(event.toolCall.id, event.toolCall.name);
           logTiming(sessionId, "tool-start", startedAt, { tool: event.toolCall.name });
           const detail = toolActivityDetail(event.toolCall.input);
+          pendingToolStarts.set(event.toolCall.id, { name: event.toolCall.name, detail, at: Date.now() });
           queue.push({ type: "tool-activity", toolCallId: event.toolCall.id, toolName: event.toolCall.name, phase: "started", ...(detail == null ? {} : { detail }) });
           return;
         }
@@ -310,6 +324,7 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
           const toolName = pendingToolNames.get(event.toolResult.id);
           if (toolName == null) return;
           pendingToolNames.delete(event.toolResult.id);
+          pendingToolStarts.delete(event.toolResult.id);
           logTiming(sessionId, "tool-end", startedAt, { tool: toolName, isError: event.toolResult.isError === true });
           const detail = toolResultPreview(event.toolResult.content);
           queue.push({ type: "tool-activity", toolCallId: event.toolResult.id, toolName, phase: "completed", isError: event.toolResult.isError === true, ...(detail == null ? {} : { detail }) });
@@ -317,6 +332,7 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
         }
         case "session_complete": {
           subscription.dispose();
+          clearInterval(heartbeat);
           logTiming(sessionId, "complete", startedAt, { reason: event.reason, delivered: deliveredMessages, usage: cumulativeUsage });
           if (event.reason === "cancelled" || event.reason === "error" || event.reason === "timeout" || event.reason === "blocking") {
             // A failed turn leaves the session state uncertain; drop the
@@ -377,6 +393,7 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
       await runtime.sendMessage(sessionId, { content: addendum == null || addendum.length === 0 ? content : `<system-reminder>\n${addendum}\n</system-reminder>\n\n${content}`, displayContent: content });
     } catch (error) {
       subscription.dispose();
+      clearInterval(heartbeat);
       if (record != null) record.historyFingerprint = undefined;
       const failure = error instanceof Error ? error : new Error(String(error));
       queue.fail(failure);
@@ -388,6 +405,7 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
 }
 
 const VCODER_MAX_TURNS = 60;
+const TOOL_HEARTBEAT_MS = 15_000;
 
 const MESSAGING_TOOLS = new Set(["SendUserMessage", "Brief", "SendMessage"]);
 

@@ -1651,6 +1651,40 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
       }),
     });
 
+    // Agent-to-agent messaging for the routed provider path (vcoder), backed by
+    // the same transcript.sendToAgent / roster / agentManagement the cursor
+    // path's SendToAgent, CreateAgent and UpdateAgent tools use.
+    const createRoutedAgentMessagingBinding = () => {
+      const roster = (): any[] => method(transcript, "listAgentsSync")?.() ?? [];
+      return {
+        selfAgentId: session.id,
+        sendToAgent: async (targetId: string, message: string, priority: boolean) =>
+          String(await sendToAgent(targetId, message, undefined, priority) ?? ""),
+        listAgents: () => {
+          const agents = roster();
+          const byId = new Map(agents.map((agent: any) => [agent.id, agent]));
+          return {
+            agents: agents
+              .filter((agent: any) => agent.id !== session.id && !agent.isGroup && agent.remoteRoom == null)
+              .map((agent: any) => ({ id: agent.id, name: agent.name, description: agent.description })),
+            groups: agents
+              .filter((agent: any) => agent.isGroup && (agent.memberIds ?? []).includes(session.id))
+              .map((group: any) => ({
+                id: group.id,
+                name: group.name,
+                members: (group.memberIds as string[])
+                  .filter(memberId => memberId !== session.id)
+                  .map(memberId => byId.get(memberId))
+                  .filter((member: any) => member != null)
+                  .map((member: any) => ({ id: member.id, name: member.name, description: member.description })),
+              })),
+          };
+        },
+        createAgent: (profile: { name: string; description: string }) => agentManagement.create(profile),
+        updateAgent: (id: string, patch: { name?: string; description?: string }) => agentManagement.update(id, patch),
+      };
+    };
+
     // Host-owned production caller for the recovered constructor. The caller
     // supplies the typed per-turn prompt/action and summarization identities;
     // resource readiness and blob ownership remain fixed to this session.
@@ -1674,6 +1708,7 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
           session.agentStore as Parameters<typeof getAgentBlobStore>[0],
         ),
         routedComputerUse: createRoutedComputerUseBinding,
+        routedAgentMessaging: createRoutedAgentMessagingBinding,
       });
     };
     runnerOptions.createProductionTurnAgentRunInput =
@@ -2584,6 +2619,8 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
                 })()),
             emittedConnectorCards: new Set(),
             routedComputerUse: createRoutedComputerUseBinding,
+            ...(isSharedRoomTurn ? {} : { routedAgentMessaging: createRoutedAgentMessagingBinding }),
+            ...(overrides.groupMemberTurn === true ? { routedGroupRoomTurn: true } : {}),
           } satisfies ProductionTurnAgentOwnerInput;
         },
         promptOptions: (_prompt, options) => toGeneratedTurnPromptOptions(options),

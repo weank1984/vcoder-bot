@@ -29,7 +29,7 @@ import type {
 } from "./system-prompt-assembly.js";
 import type { SummarizationPromptSession } from "../../packages/agent-summarization/summarization-handler.js";
 import { createProviderPromptSession } from "../extensions/inference/provider-session.js";
-import type { VCoderComputerUseBinding } from "../extensions/inference/provider-session.js";
+import type { VCoderAgentMessagingBinding, VCoderComputerUseBinding } from "../extensions/inference/provider-session.js";
 import { getSandRootDir } from "../host-paths.js";
 import { SandSettingsStore } from "../../shared/node/settings/sand-settings-store.js";
 import type { AgentProfilePromptSnapshot } from "./sand-agent-profile-prompt.js";
@@ -139,6 +139,13 @@ export interface TurnAgentRunContextInput<ContextValue> {
    * on first tool call rather than blocking session creation.
    */
   readonly routedComputerUse?: () => Promise<VCoderComputerUseBinding>;
+  /**
+   * Agent-to-agent messaging (SendToAgent/ListAgents/CreateAgent/UpdateAgent)
+   * for the routed provider path; cursor gets these from turn-toolset.
+   */
+  readonly routedAgentMessaging?: () => VCoderAgentMessagingBinding;
+  /** This turn is a member speaking in a local group room. */
+  readonly routedGroupRoomTurn?: boolean;
 }
 
 export interface TurnAgentRunContext<ContextValue> {
@@ -199,7 +206,7 @@ export async function createTurnAgentRunContext<ContextValue>(
     // text, which the chat never renders; deliverFinalText lets the provider
     // executor route the final reply through a real SendMessage call. Subagent
     // and silence-allowed (e.g. quiet routine) turns keep the text internal.
-    : createProviderPromptSession(inferenceProvider, { streamActivity: true, deliverFinalText: !input.isSubagentRunner && !input.isSilenceAllowed, ...(input.routedComputerUse === undefined ? {} : { computerUse: input.routedComputerUse }), conversationId: input.conversationId }) as unknown as TurnAgentPromptSession;
+    : createProviderPromptSession(inferenceProvider, { streamActivity: true, deliverFinalText: !input.isSubagentRunner, silenceAllowed: input.isSilenceAllowed, ...(input.routedGroupRoomTurn === true ? { groupRoomTurn: true } : {}), ...(input.routedComputerUse === undefined ? {} : { computerUse: input.routedComputerUse }), ...(input.routedAgentMessaging === undefined ? {} : { agentMessaging: input.routedAgentMessaging }), conversationId: input.conversationId }) as unknown as TurnAgentPromptSession;
   const summarizationSession = inferenceProvider === "cursor" ? input.inference.createSummarizationSession?.(
     input.onRequestId,
     {

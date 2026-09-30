@@ -41,7 +41,7 @@ import {
   type TurnAgentInferenceOwner,
   type TurnAgentRunContext,
 } from "./turn-run-shell.js";
-import type { VCoderComputerUseBinding } from "../extensions/inference/provider-session.js";
+import type { VCoderAgentMessagingBinding, VCoderComputerUseBinding } from "../extensions/inference/provider-session.js";
 
 /**
  * The host-owned inputs immediately before immutable buildAgentForRun.  This
@@ -106,6 +106,8 @@ export interface ProductionTurnAgentOwnerInput {
     resourceAccessor: TurnAgentResourceAccessor,
     context: Context,
   ) => Promise<VCoderComputerUseBinding>;
+  readonly routedAgentMessaging?: () => VCoderAgentMessagingBinding;
+  readonly routedGroupRoomTurn?: boolean;
 }
 
 export interface ProductionTurnAgentOwner {
@@ -227,6 +229,8 @@ export async function createProductionTurnAgentOwner(
       ? {}
       : { onLatestPromptMessages: input.onLatestPromptMessages }),
     ...(routedComputerUse === undefined ? {} : { routedComputerUse }),
+    ...(input.routedAgentMessaging === undefined ? {} : { routedAgentMessaging: input.routedAgentMessaging }),
+    ...(input.routedGroupRoomTurn === true ? { routedGroupRoomTurn: true } : {}),
   });
 
   try {

@@ -17,12 +17,15 @@ import { getBoxSecretsStorePath } from "../secrets/secrets-service.js";
 import { streamCodexDirectResponses, type CodexDirectTool } from "./codex-direct-responses.js";
 import type { LabelMessage, PromptExecutor } from "./sand-labeling.js";
 import type { ComputerToolDependencies } from "../../runner/tools/sand-computer-tool.js";
+import type { VCoderAgentMessagingBinding } from "./vcoder-agents-mcp-bridge.js";
+export type { VCoderAgentMessagingBinding } from "./vcoder-agents-mcp-bridge.js";
 
 export interface VCoderComputerUseBinding {
   readonly context: unknown;
   readonly dependencies: ComputerToolDependencies<unknown>;
 }
 type ComputerUseProvider = () => Promise<VCoderComputerUseBinding>;
+type AgentMessagingProvider = () => VCoderAgentMessagingBinding;
 
 type Loose = Record<string, any>;
 interface ProviderMessage extends LabelMessage { role: string; content: string | readonly unknown[] }
@@ -294,6 +297,30 @@ async function vcoderComputerBridgeUrl(conversationId: string | undefined, compu
   }
 }
 
+// Per-conversation agent-messaging MCP bridge (SendToAgent & co.), kept alive
+// across turns for the same reason as the computer-use bridge.
+const vcoderAgentBridges = new Map<string, { url: string; latest: AgentMessagingProvider }>();
+
+async function vcoderAgentsBridgeUrl(conversationId: string | undefined, agentMessaging: AgentMessagingProvider): Promise<{ url: string; close?: () => Promise<void> } | null> {
+  try {
+    const { createVcoderAgentsMcpBridge } = await import("./vcoder-agents-mcp-bridge.js");
+    if (conversationId == null) {
+      const bridge = await createVcoderAgentsMcpBridge(agentMessaging);
+      return { url: bridge.url, close: () => bridge.close() };
+    }
+    const existing = vcoderAgentBridges.get(conversationId);
+    if (existing != null) { existing.latest = agentMessaging; return { url: existing.url }; }
+    const entry = { url: "", latest: agentMessaging };
+    const bridge = await createVcoderAgentsMcpBridge(() => entry.latest());
+    entry.url = bridge.url;
+    vcoderAgentBridges.set(conversationId, entry);
+    return { url: entry.url };
+  } catch (error) {
+    console.error("[vcoder] failed to start the agent-messaging MCP bridge; continuing without it:", error);
+    return null;
+  }
+}
+
 function messageText(content: ProviderMessage["content"]): string {
   if (typeof content === "string") return content;
   const texts = content.map(part => {
@@ -337,20 +364,31 @@ function splitVCoderTurnInput(messages: readonly ProviderMessage[]): { readonly 
 // mid-turn (ack → progress → result) instead of one synthesized message at
 // the end. Plain assistant text is scratchpad: shown only as activity, and
 // delivered as a fallback reply only if the model sent no message at all.
-function vcoderExecutor(messages: readonly ProviderMessage[], invocationId: string, onUsage?: (usage: UsageRecord) => void, mcpServerUrl?: string, options?: { readonly streamActivity?: boolean; readonly deliverFinalText?: boolean; readonly computerUse?: ComputerUseProvider; readonly conversationId?: string }) {
+function vcoderExecutor(messages: readonly ProviderMessage[], invocationId: string, onUsage?: (usage: UsageRecord) => void, mcpServerUrl?: string, options?: { readonly streamActivity?: boolean; readonly deliverFinalText?: boolean; readonly silenceAllowed?: boolean; readonly groupRoomTurn?: boolean; readonly computerUse?: ComputerUseProvider; readonly agentMessaging?: AgentMessagingProvider; readonly conversationId?: string }) {
   const streamActivity = options?.streamActivity === true;
   const deliverMessages = options?.deliverFinalText === true;
+  // Silence-allowed turns (woken by another bot, a routine, a background
+  // wake) may end without talking to the user, so scratchpad text is not
+  // promoted to a reply; explicit SendUserMessage calls are still delivered.
+  const deliverFallback = deliverMessages && options?.silenceAllowed !== true;
   const usage = deferred<{ promptTokens: number; completionTokens: number; totalTokens: number }>();
   const extendedUsage = deferred<{ inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; maxTokens: number }>();
   const resultResponse = deferred<ReturnType<typeof response>>();
   const metadata = deferred<Record<string, unknown>>();
   const fullStream = (async function* () {
     const computerBridge = options?.computerUse == null ? null : await vcoderComputerBridgeUrl(options.conversationId, options.computerUse);
+    const agentsBridge = options?.agentMessaging == null ? null : await vcoderAgentsBridgeUrl(options.conversationId, options.agentMessaging);
     const mcpServers = [
       ...(mcpServerUrl == null ? [] : [{ type: "http" as const, name: "grok_bot_plugins", url: mcpServerUrl }]),
       ...(computerBridge == null ? [] : [{ type: "http" as const, name: "sand_computer", url: computerBridge.url }]),
+      ...(agentsBridge == null ? [] : [{ type: "http" as const, name: "sand_agents", url: agentsBridge.url }]),
     ];
-    const computerUsePromptAddendum = computerBridge == null ? undefined : "This box has a live virtual desktop the user can see in real time. Use the sand_computer MCP tools (screenshot, computer) to look at the screen and operate it like a human would — click, type, scroll, drag — instead of only using the command line for GUI tasks.";
+    const addenda = [
+      ...(computerBridge == null ? [] : ["This box has a live virtual desktop the user can see in real time. Use the sand_computer MCP tools (screenshot, computer) to look at the screen and operate it like a human would — click, type, scroll, drag — instead of only using the command line for GUI tasks."]),
+      ...(options?.groupRoomTurn === true ? ["You are speaking in a group chat room right now. Your SendUserMessage calls are posted to that room for everyone in it to see; that is how you reply to the room and to the other bots in it. Do not use SendToAgent to post to this room. To pass, send exactly \"(pass)\" with SendUserMessage."] : []),
+      ...(agentsBridge == null ? [] : ["To reach the user's other bots or a group chat, use the sand_agents MCP tools: ListAgents for ids, then SendToAgent(target_id, message). VCoder's built-in SendMessage/teammate tools cannot reach them. SendToAgent is fire-and-forget: replies arrive later as a new turn, so after sending, tell the user it was sent and end your turn instead of waiting. If a tool returns an error, report that error as-is; do not guess a cause."]),
+    ];
+    const computerUsePromptAddendum = addenda.length === 0 ? undefined : addenda.join("\n\n");
     const { runVCoderRuntimeTurn } = await import("./vcoder-runtime-bridge.js");
     // Seed prompt for a fresh VCoder session. Unlike providerPrompt() it omits
     // GROK_ROUTER_SYSTEM_PROMPT ("respond ... in natural language"), which
@@ -385,7 +423,8 @@ function vcoderExecutor(messages: readonly ProviderMessage[], invocationId: stri
       }
       const final = await handle.result;
       await computerBridge?.close?.();
-      if (deliverMessages && final.deliveredMessages === 0 && final.text.trim().length > 0) {
+      await agentsBridge?.close?.();
+      if (deliverFallback && final.deliveredMessages === 0 && final.text.trim().length > 0) {
         yield { type: "tool-call" as const, toolCallId: `${invocationId}-vcoder-send-fallback`, toolName: SAND_SEND_MESSAGE_TOOL_NAME, args: { type: "text", content: final.text } };
       }
       const { inputTokens: input, outputTokens: output, cacheReadTokens, cacheWriteTokens } = final.usage;
@@ -399,6 +438,7 @@ function vcoderExecutor(messages: readonly ProviderMessage[], invocationId: stri
       resultResponse.resolve(response(deliveredTexts.length > 0 ? deliveredTexts.join("\n\n") : final.text, invocationId, "vcoder"));
     } catch (error) {
       await computerBridge?.close?.();
+      await agentsBridge?.close?.();
       usage.reject(error); extendedUsage.reject(error); metadata.reject(error); resultResponse.reject(error); throw error;
     }
   })();
@@ -433,18 +473,18 @@ function openRouterExecutor(messages: readonly ProviderMessage[], invocationId: 
 }
 
 class ProviderPromptExecutor extends BasePromptExecutor<ProviderMessage> {
-  constructor(readonly provider: RoutedProvider, initialMessages?: readonly ProviderMessage[], readonly onUsage?: (usage: UsageRecord) => void, readonly streamActivity = false, readonly deliverFinalText = false, readonly computerUse?: ComputerUseProvider, readonly conversationId?: string) { super(new BasePromptBuilder(initialMessages)); }
+  constructor(readonly provider: RoutedProvider, initialMessages?: readonly ProviderMessage[], readonly onUsage?: (usage: UsageRecord) => void, readonly streamActivity = false, readonly deliverFinalText = false, readonly silenceAllowed = false, readonly groupRoomTurn = false, readonly computerUse?: ComputerUseProvider, readonly conversationId?: string, readonly agentMessaging?: AgentMessagingProvider) { super(new BasePromptBuilder(initialMessages)); }
   stream(_ctx: unknown, invocationId = crypto.randomUUID(), definitions?: readonly Loose[]) {
     if (this.provider === "codex") return codexExecutor(this.getMessages(), invocationId, definitions, undefined, this.onUsage);
     if (this.provider === "claude-code") return claudeExecutor(this.getMessages(), invocationId, this.onUsage);
-    if (this.provider === "vcoder") return vcoderExecutor(this.getMessages(), invocationId, this.onUsage, undefined, { streamActivity: this.streamActivity, deliverFinalText: this.deliverFinalText, ...(this.computerUse === undefined ? {} : { computerUse: this.computerUse }), ...(this.conversationId === undefined ? {} : { conversationId: this.conversationId }) });
+    if (this.provider === "vcoder") return vcoderExecutor(this.getMessages(), invocationId, this.onUsage, undefined, { streamActivity: this.streamActivity, deliverFinalText: this.deliverFinalText, silenceAllowed: this.silenceAllowed, groupRoomTurn: this.groupRoomTurn, ...(this.computerUse === undefined ? {} : { computerUse: this.computerUse }), ...(this.conversationId === undefined ? {} : { conversationId: this.conversationId }), ...(this.agentMessaging === undefined ? {} : { agentMessaging: this.agentMessaging }) });
     return openRouterExecutor(this.getMessages(), invocationId, definitions, undefined, this.onUsage);
   }
 }
 
-export function createProviderPromptSession(provider: RoutedProvider, options?: { readonly streamActivity?: boolean; readonly deliverFinalText?: boolean; readonly computerUse?: ComputerUseProvider; readonly conversationId?: string }): { getModelId(): string; getExecutor(state?: unknown): PromptExecutor } {
+export function createProviderPromptSession(provider: RoutedProvider, options?: { readonly streamActivity?: boolean; readonly deliverFinalText?: boolean; readonly silenceAllowed?: boolean; readonly groupRoomTurn?: boolean; readonly computerUse?: ComputerUseProvider; readonly agentMessaging?: AgentMessagingProvider; readonly conversationId?: string }): { getModelId(): string; getExecutor(state?: unknown): PromptExecutor } {
   const modelId = provider === "codex" ? configuredCodexModel() : provider === "claude-code" ? "claude-code" : provider === "vcoder" ? "vcoder" : process.env.SAND_OPENROUTER_MODEL?.trim() || "openai/gpt-5.2";
-  return { getModelId: () => modelId, getExecutor: state => new ProviderPromptExecutor(provider, Array.isArray(state) ? state as ProviderMessage[] : undefined, usage => recordRoutedUsage(provider, usage), options?.streamActivity === true, options?.deliverFinalText === true, options?.computerUse, options?.conversationId) };
+  return { getModelId: () => modelId, getExecutor: state => new ProviderPromptExecutor(provider, Array.isArray(state) ? state as ProviderMessage[] : undefined, usage => recordRoutedUsage(provider, usage), options?.streamActivity === true, options?.deliverFinalText === true, options?.silenceAllowed === true, options?.groupRoomTurn === true, options?.computerUse, options?.conversationId, options?.agentMessaging) };
 }
 
 

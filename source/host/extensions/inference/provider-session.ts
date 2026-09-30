@@ -18,6 +18,7 @@ import { streamCodexDirectResponses, type CodexDirectTool } from "./codex-direct
 import type { LabelMessage, PromptExecutor } from "./sand-labeling.js";
 import type { ComputerToolDependencies } from "../../runner/tools/sand-computer-tool.js";
 import type { VCoderAgentMessagingBinding } from "./vcoder-agents-mcp-bridge.js";
+import { vcoderAgentContextFromSystemPrompt } from "./vcoder-agent-context.js";
 export type { VCoderAgentMessagingBinding } from "./vcoder-agents-mcp-bridge.js";
 
 export interface VCoderComputerUseBinding {
@@ -330,7 +331,10 @@ function messageText(content: ProviderMessage["content"]): string {
   return texts.every(text => text != null) ? texts.join("\n") : JSON.stringify(content);
 }
 
-function vcoderSeedPrompt(messages: readonly ProviderMessage[]): string {
+function vcoderSeedPrompt(allMessages: readonly ProviderMessage[]): string {
+  // System messages are injected per turn as agent context (see
+  // vcoderAgentContextFromSystemPrompt), never replayed as history.
+  const messages = allMessages.filter(message => message.role !== "system");
   if (messages.length === 1 && messages[0]!.role === "user") return messageText(messages[0]!.content);
   const rendered = messages.map(message => `${message.role.toUpperCase()}: ${messageText(message.content)}`).join("\n\n");
   return `Earlier messages of this conversation (for context), followed by the latest user message:\n\n${rendered}`;
@@ -383,9 +387,12 @@ function vcoderExecutor(messages: readonly ProviderMessage[], invocationId: stri
       ...(computerBridge == null ? [] : [{ type: "http" as const, name: "sand_computer", url: computerBridge.url }]),
       ...(agentsBridge == null ? [] : [{ type: "http" as const, name: "sand_agents", url: agentsBridge.url }]),
     ];
+    const systemText = messages.filter(message => message.role === "system").map(message => messageText(message.content)).join("\n\n");
+    const agentContext = vcoderAgentContextFromSystemPrompt(systemText);
     const addenda = [
+      ...(agentContext == null ? [] : [`Who you are and who you work with (refreshed every turn):\n\n${agentContext}`]),
       ...(computerBridge == null ? [] : ["This box has a live virtual desktop the user can see in real time. Use the sand_computer MCP tools (screenshot, computer) to look at the screen and operate it like a human would — click, type, scroll, drag — instead of only using the command line for GUI tasks."]),
-      ...(options?.groupRoomTurn === true ? ["You are speaking in a group chat room right now. Your SendUserMessage calls are posted to that room for everyone in it to see; that is how you reply to the room and to the other bots in it. Do not use SendToAgent to post to this room. To pass, send exactly \"(pass)\" with SendUserMessage. A room turn is for discussion: give your view, plan or review from what you already know, in a few minutes at most. Do not run test suites, builds or long commands, and do not edit project files during a room turn — every other member waits until you finish. If real work is needed, say in the room what you propose to do and wait for the user to ask you to do it in your 1:1 chat."] : []),
+      ...(options?.groupRoomTurn === true ? ["You are speaking in a group chat room right now. Your SendUserMessage calls are posted to that room for everyone in it to see; that is how you reply to the room and to the other bots in it. Do not use SendToAgent to post to this room. To pass, send exactly \"(pass)\" with SendUserMessage. You may do real work in a room turn (read code, edit files, run commands) when it is your part of what the room agreed, but keep each turn focused: other members wait until you finish, so avoid multi-minute runs here — start long jobs in the background and report when they are done. When you finish, post the result to the room, and @-mention by name the member who should act next (or the user, if a decision is needed); that mention is what hands them the turn."] : []),
       ...(agentsBridge == null ? [] : ["To reach the user's other bots or a group chat, use the sand_agents MCP tools: ListAgents for ids, then SendToAgent(target_id, message). VCoder's built-in SendMessage/teammate tools cannot reach them. SendToAgent is fire-and-forget: replies arrive later as a new turn, so after sending, tell the user it was sent and end your turn instead of waiting. If a tool returns an error, report that error as-is; do not guess a cause."]),
     ];
     const computerUsePromptAddendum = addenda.length === 0 ? undefined : addenda.join("\n\n");

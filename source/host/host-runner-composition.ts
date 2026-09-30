@@ -1333,6 +1333,41 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
           },
         });
       })();
+    const rosterAgentDirectory = () => {
+      const roster = method(transcript, "listAgentsSync")?.() ?? [];
+      return roster
+        .filter((agent: any) =>
+          agent.id !== session.id &&
+          !agent.isGroup &&
+          agent.remoteRoom == null
+        )
+        .map((agent: any) => ({
+          id: agent.id,
+          name: agent.name,
+          description: agent.description
+        }));
+    };
+    const rosterAgentGroups = () => {
+      const roster = method(transcript, "listAgentsSync")?.() ?? [];
+      const byId = new Map(roster.map((agent: any) => [agent.id, agent]));
+      return roster
+        .filter((agent: any) =>
+          agent.isGroup && (agent.memberIds ?? []).includes(session.id)
+        )
+        .map((group: any) => ({
+          id: group.id,
+          name: group.name,
+          members: (group.memberIds as string[])
+            .filter((memberId: string) => memberId !== session.id)
+            .map((memberId: string) => byId.get(memberId) as any)
+            .filter((member: any) => member != null)
+            .map((member: any) => ({
+              id: member.id,
+              name: member.name,
+              description: member.description
+            }))
+        }));
+    };
     const productionSystemPromptAssembly = productionContext === undefined
       || productionRequestContext === undefined
       ? undefined
@@ -1373,8 +1408,10 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
           connectorManifests: CONNECTOR_MANIFESTS,
           sendToAgentImpl: sendToAgent,
           agentManagement,
-          agentDirectory: () => [],
-          agentGroups: () => [],
+          // The reconstructed source hard-coded these to [] so every bot was
+          // told "This user has no other agents yet"; use the live roster.
+          agentDirectory: () => rosterAgentDirectory(),
+          agentGroups: () => rosterAgentGroups(),
           agentsRootDir: () => dirname(dirname(session.dbPath)),
           isSpotlightEnabled: () => method(experiments, "isSpotlightEnabled")?.() ?? false,
           isMultitaskEnabled: () => method(experiments, "isMultitaskEnabled")?.() ?? false,
@@ -1471,41 +1508,8 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
         )?.(platform) ?? false,
       resolveCloudAgentTitle,
       sendToAgent,
-      agentDirectory: () => {
-        const roster = method(transcript, "listAgentsSync")?.() ?? [];
-        return roster
-          .filter((agent: any) =>
-            agent.id !== session.id &&
-            !agent.isGroup &&
-            agent.remoteRoom == null
-          )
-          .map((agent: any) => ({
-            id: agent.id,
-            name: agent.name,
-            description: agent.description
-          }));
-      },
-      agentGroups: () => {
-        const roster = method(transcript, "listAgentsSync")?.() ?? [];
-        const byId = new Map(roster.map((agent: any) => [agent.id, agent]));
-        return roster
-          .filter((agent: any) =>
-            agent.isGroup && agent.memberIds.includes(session.id)
-          )
-          .map((group: any) => ({
-            id: group.id,
-            name: group.name,
-            members: group.memberIds
-              .filter((memberId: string) => memberId !== session.id)
-              .map((memberId: string) => byId.get(memberId))
-              .filter((member: any) => member != null)
-              .map((member: any) => ({
-                id: member.id,
-                name: member.name,
-                description: member.description
-              }))
-          }));
-      },
+      agentDirectory: () => rosterAgentDirectory(),
+      agentGroups: () => rosterAgentGroups(),
       agentManagement,
       agentsRootDir: () => dirname(dirname(session.dbPath))
     };

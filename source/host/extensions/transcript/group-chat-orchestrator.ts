@@ -1,5 +1,6 @@
 import {
   GROUP_MAX_MEMBER_TURNS,
+  GROUP_MAX_MENTION_ROUNDS,
   GROUP_MAX_MESSAGES_PER_TURN,
   GROUP_MAX_ROUNDS,
   SHARED_ROOM_HISTORY_LIMIT,
@@ -8,6 +9,7 @@ import {
   isPassContent,
   messagesSinceMemberLastSpoke,
   orderRoundSpeakers,
+  parseGroupMentions,
   resolveResponders,
   type GroupDescription,
   type GroupMember,
@@ -41,16 +43,31 @@ export class GroupChatOrchestrator {
 
     const memberById = new Map(members.map((member) => [member.id, member]));
     let totalMessages = 0;
+    // Regular rounds follow resolveResponders; after them, keep going only
+    // for members @-mentioned in the previous round (a hand-off such as
+    // "@测试工程师 请验证"), which otherwise went unanswered because the
+    // run ended right after the mention was posted.
+    let mentioned: string[] = [];
 
-    for (let round = 0; round < GROUP_MAX_ROUNDS; round += 1) {
+    for (
+      let round = 0;
+      round < GROUP_MAX_ROUNDS + GROUP_MAX_MENTION_ROUNDS;
+      round += 1
+    ) {
       if (!this.deps.isCurrent()) return;
-      const responderIds = resolveResponders(
-        members,
-        this.deps.readHistory(),
-      ).map((member) => member.id);
+      const isMentionRound = round >= GROUP_MAX_ROUNDS;
+      if (isMentionRound && mentioned.length === 0) return;
+      const responderIds = isMentionRound
+        ? mentioned
+        : resolveResponders(members, this.deps.readHistory()).map(
+            (member) => member.id,
+          );
       let messagesThisRound = 0;
+      const mentionedThisRound = new Set<string>();
 
-      for (const memberId of orderRoundSpeakers(responderIds, round)) {
+      for (const memberId of isMentionRound
+        ? responderIds
+        : orderRoundSpeakers(responderIds, round)) {
         if (totalMessages >= GROUP_MAX_MEMBER_TURNS || !this.deps.isCurrent())
           return;
         const member = memberById.get(memberId);
@@ -60,6 +77,8 @@ export class GroupChatOrchestrator {
         let hitCap = false;
         for (const content of sent) {
           this.deps.postMemberMessage(member, content);
+          for (const id of parseGroupMentions(content, members).memberIds)
+            if (id !== member.id) mentionedThisRound.add(id);
           totalMessages += 1;
           messagesThisRound += 1;
           if (totalMessages >= GROUP_MAX_MEMBER_TURNS) {
@@ -72,6 +91,7 @@ export class GroupChatOrchestrator {
       }
 
       if (messagesThisRound === 0) return;
+      mentioned = [...mentionedThisRound];
     }
   }
 

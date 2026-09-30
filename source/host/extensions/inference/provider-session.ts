@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -265,42 +266,117 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
 // framing, so this executor is mostly plumbing: forward chunks, accumulate
 // text, and deliver it as a synthesized SendMessage call the same way the
 // former CLI-backed implementation did (deliverFinalText).
-function vcoderExecutor(messages: readonly ProviderMessage[], invocationId: string, onUsage?: (usage: UsageRecord) => void, mcpServerUrl?: string, options?: { readonly streamActivity?: boolean; readonly deliverFinalText?: boolean; readonly computerUse?: ComputerUseProvider }) {
+// Per-conversation computer-use MCP bridge. It must outlive a single turn:
+// the VCoder session is reused across turns (see vcoder-runtime-bridge.ts)
+// and binds MCP URLs at startSession, so a per-turn bridge would leave the
+// session pointing at a closed port. The bridge resolves the latest turn's
+// box binding on every call.
+const vcoderComputerBridges = new Map<string, { url: string; latest: VCoderComputerUseBinding }>();
+
+async function vcoderComputerBridgeUrl(conversationId: string | undefined, computerUse: ComputerUseProvider): Promise<{ url: string; close?: () => Promise<void> } | null> {
+  try {
+    const binding = await computerUse();
+    const { createVcoderComputerMcpBridge } = await import("./vcoder-computer-mcp-bridge.js");
+    if (conversationId == null) {
+      const bridge = await createVcoderComputerMcpBridge(() => ({ deps: binding.dependencies, context: binding.context }));
+      return { url: bridge.url, close: () => bridge.close() };
+    }
+    const existing = vcoderComputerBridges.get(conversationId);
+    if (existing != null) { existing.latest = binding; return { url: existing.url }; }
+    const entry = { url: "", latest: binding };
+    const bridge = await createVcoderComputerMcpBridge(() => ({ deps: entry.latest.dependencies, context: entry.latest.context }));
+    entry.url = bridge.url;
+    vcoderComputerBridges.set(conversationId, entry);
+    return { url: entry.url };
+  } catch (error) {
+    console.error("[vcoder] failed to start the box computer-use MCP bridge; continuing without it:", error);
+    return null;
+  }
+}
+
+function messageText(content: ProviderMessage["content"]): string {
+  if (typeof content === "string") return content;
+  const texts = content.map(part => {
+    const record = part as Loose;
+    return record?.type === "text" && typeof record.text === "string" ? record.text : null;
+  });
+  return texts.every(text => text != null) ? texts.join("\n") : JSON.stringify(content);
+}
+
+function vcoderSeedPrompt(messages: readonly ProviderMessage[]): string {
+  if (messages.length === 1 && messages[0]!.role === "user") return messageText(messages[0]!.content);
+  const rendered = messages.map(message => `${message.role.toUpperCase()}: ${messageText(message.content)}`).join("\n\n");
+  return `Earlier messages of this conversation (for context), followed by the latest user message:\n\n${rendered}`;
+}
+
+function userHistoryFingerprint(messages: readonly ProviderMessage[]): string {
+  const hash = createHash("sha256");
+  for (const message of messages) if (message.role === "user") hash.update(messageText(message.content)).update("\u0000");
+  return hash.digest("hex");
+}
+
+// Splits Grok Bot's prompt state into (history the VCoder session has already
+// seen, new user input). Everything after the last assistant message is new.
+function splitVCoderTurnInput(messages: readonly ProviderMessage[]): { readonly newInput: string; readonly historyFingerprint: string; readonly nextHistoryFingerprint: string } {
+  let lastAssistant = -1;
+  messages.forEach((message, index) => { if (message.role === "assistant") lastAssistant = index; });
+  const previous = messages.slice(0, lastAssistant + 1);
+  const fresh = messages.slice(lastAssistant + 1).filter(message => message.role === "user");
+  return {
+    newInput: fresh.map(message => messageText(message.content)).join("\n\n"),
+    historyFingerprint: userHistoryFingerprint(previous),
+    nextHistoryFingerprint: userHistoryFingerprint(messages),
+  };
+}
+
+// VCoder runs embedded in-process via @vcoder/server's VcoderCoreRuntimeImpl
+// (see vcoder-runtime-bridge.ts). With a conversationId the turn reuses one
+// VCoder session per Grok Bot conversation and sends only the new user input.
+// Every SendUserMessage the model makes is yielded immediately as its own
+// SendMessage tool call, so the runner's real SendMessage tool delivers it
+// mid-turn (ack → progress → result) instead of one synthesized message at
+// the end. Plain assistant text is scratchpad: shown only as activity, and
+// delivered as a fallback reply only if the model sent no message at all.
+function vcoderExecutor(messages: readonly ProviderMessage[], invocationId: string, onUsage?: (usage: UsageRecord) => void, mcpServerUrl?: string, options?: { readonly streamActivity?: boolean; readonly deliverFinalText?: boolean; readonly computerUse?: ComputerUseProvider; readonly conversationId?: string }) {
   const streamActivity = options?.streamActivity === true;
+  const deliverMessages = options?.deliverFinalText === true;
   const usage = deferred<{ promptTokens: number; completionTokens: number; totalTokens: number }>();
   const extendedUsage = deferred<{ inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; maxTokens: number }>();
   const resultResponse = deferred<ReturnType<typeof response>>();
   const metadata = deferred<Record<string, unknown>>();
   const fullStream = (async function* () {
-    // Computer-use is still bridged over a loopback MCP server rather than
-    // registered directly against the embedded runtime's tool registry: the
-    // registry is constructed privately inside VcoderCoreRuntimeImpl's
-    // startSession and is not exposed to callers (confirmed by inspecting
-    // packages/server/src/runtime/vcoder-core.ts — the only public surface
-    // for adding tools is startSession's mcpServers list, same as
-    // grok_bot_plugins below). Building this binding must never fail the
-    // whole turn: if the box resources aren't ready yet, vcoder still runs
-    // without computer-use.
-    let computerBridge: { readonly url: string; close(): Promise<void> } | null = null;
-    if (options?.computerUse != null) {
-      try {
-        const computerBinding = await options.computerUse();
-        computerBridge = await (await import("./vcoder-computer-mcp-bridge.js")).createVcoderComputerMcpBridge(computerBinding.dependencies, computerBinding.context);
-      } catch (error) {
-        console.error("[vcoder] failed to start the box computer-use MCP bridge; continuing without it:", error);
-      }
-    }
+    const computerBridge = options?.computerUse == null ? null : await vcoderComputerBridgeUrl(options.conversationId, options.computerUse);
     const mcpServers = [
       ...(mcpServerUrl == null ? [] : [{ type: "http" as const, name: "grok_bot_plugins", url: mcpServerUrl }]),
       ...(computerBridge == null ? [] : [{ type: "http" as const, name: "sand_computer", url: computerBridge.url }]),
     ];
     const computerUsePromptAddendum = computerBridge == null ? undefined : "This box has a live virtual desktop the user can see in real time. Use the sand_computer MCP tools (screenshot, computer) to look at the screen and operate it like a human would — click, type, scroll, drag — instead of only using the command line for GUI tasks.";
     const { runVCoderRuntimeTurn } = await import("./vcoder-runtime-bridge.js");
-    const handle = runVCoderRuntimeTurn(providerPrompt(messages), { ...(computerUsePromptAddendum == null ? {} : { systemPromptAddendum: computerUsePromptAddendum }), mcpServers });
+    // Seed prompt for a fresh VCoder session. Unlike providerPrompt() it omits
+    // GROK_ROUTER_SYSTEM_PROMPT ("respond ... in natural language"), which
+    // contradicts the SendUserMessage-only reply channel set via outputStyle.
+    const fullPrompt = vcoderSeedPrompt(messages);
+    const split = options?.conversationId == null ? null : splitVCoderTurnInput(messages);
+    const handle = split == null || split.newInput.trim().length === 0
+      ? runVCoderRuntimeTurn(fullPrompt, { ...(computerUsePromptAddendum == null ? {} : { systemPromptAddendum: computerUsePromptAddendum }), mcpServers })
+      : runVCoderRuntimeTurn(split.newInput, {
+        ...(computerUsePromptAddendum == null ? {} : { systemPromptAddendum: computerUsePromptAddendum }),
+        mcpServers,
+        conversationId: options!.conversationId!,
+        fullPrompt,
+        historyFingerprint: split.historyFingerprint,
+        nextHistoryFingerprint: split.nextHistoryFingerprint,
+      });
+    let messageIndex = 0;
+    const deliveredTexts: string[] = [];
     try {
       for await (const chunk of handle.chunks) {
-        if (chunk.type === "text-delta" && typeof chunk.textDelta === "string") {
-          yield { type: "text-delta" as const, textDelta: chunk.textDelta };
+        if (chunk.type === "message" && typeof chunk.text === "string") {
+          if (deliverMessages && chunk.text.trim().length > 0) {
+            messageIndex += 1;
+            deliveredTexts.push(chunk.text);
+            yield { type: "tool-call" as const, toolCallId: `${invocationId}-vcoder-send-${messageIndex}`, toolName: SAND_SEND_MESSAGE_TOOL_NAME, args: { type: "text", content: chunk.text } };
+          }
         } else if (chunk.type === "reasoning" && typeof chunk.textDelta === "string") {
           if (streamActivity) yield { type: "reasoning" as const, textDelta: chunk.textDelta };
         } else if (chunk.type === "tool-activity" && chunk.toolCallId != null && chunk.toolName != null && chunk.phase != null) {
@@ -308,18 +384,21 @@ function vcoderExecutor(messages: readonly ProviderMessage[], invocationId: stri
         }
       }
       const final = await handle.result;
-      await computerBridge?.close();
-      if (options?.deliverFinalText === true && final.text.trim().length > 0) {
-        yield { type: "tool-call" as const, toolCallId: `${invocationId}-vcoder-send-message`, toolName: SAND_SEND_MESSAGE_TOOL_NAME, args: { type: "text", content: final.text } };
+      await computerBridge?.close?.();
+      if (deliverMessages && final.deliveredMessages === 0 && final.text.trim().length > 0) {
+        yield { type: "tool-call" as const, toolCallId: `${invocationId}-vcoder-send-fallback`, toolName: SAND_SEND_MESSAGE_TOOL_NAME, args: { type: "text", content: final.text } };
       }
-      const input = final.usage.inputTokens, output = final.usage.outputTokens;
-      onUsage?.({ inputTokens: input, outputTokens: output, cacheReadTokens: 0, cacheWriteTokens: 0 });
+      const { inputTokens: input, outputTokens: output, cacheReadTokens, cacheWriteTokens } = final.usage;
+      onUsage?.({ inputTokens: input, outputTokens: output, cacheReadTokens, cacheWriteTokens });
       usage.resolve({ promptTokens: input, completionTokens: output, totalTokens: input + output });
-      extendedUsage.resolve({ inputTokens: input, outputTokens: output, cacheReadTokens: 0, cacheWriteTokens: 0, maxTokens: 0 });
-      metadata.resolve({ vcoder: { runtime: "embedded" } });
-      resultResponse.resolve(response(final.text, invocationId, "vcoder"));
+      extendedUsage.resolve({ inputTokens: input, outputTokens: output, cacheReadTokens, cacheWriteTokens, maxTokens: 0 });
+      metadata.resolve({ vcoder: { runtime: "embedded", sessionReuse: split != null } });
+      // The assistant message kept in Grok Bot's prompt state mirrors what the
+      // user actually received, so later turns (and the history fingerprint)
+      // see the real reply rather than scratchpad text.
+      resultResponse.resolve(response(deliveredTexts.length > 0 ? deliveredTexts.join("\n\n") : final.text, invocationId, "vcoder"));
     } catch (error) {
-      await computerBridge?.close();
+      await computerBridge?.close?.();
       usage.reject(error); extendedUsage.reject(error); metadata.reject(error); resultResponse.reject(error); throw error;
     }
   })();
@@ -354,18 +433,18 @@ function openRouterExecutor(messages: readonly ProviderMessage[], invocationId: 
 }
 
 class ProviderPromptExecutor extends BasePromptExecutor<ProviderMessage> {
-  constructor(readonly provider: RoutedProvider, initialMessages?: readonly ProviderMessage[], readonly onUsage?: (usage: UsageRecord) => void, readonly streamActivity = false, readonly deliverFinalText = false, readonly computerUse?: ComputerUseProvider) { super(new BasePromptBuilder(initialMessages)); }
+  constructor(readonly provider: RoutedProvider, initialMessages?: readonly ProviderMessage[], readonly onUsage?: (usage: UsageRecord) => void, readonly streamActivity = false, readonly deliverFinalText = false, readonly computerUse?: ComputerUseProvider, readonly conversationId?: string) { super(new BasePromptBuilder(initialMessages)); }
   stream(_ctx: unknown, invocationId = crypto.randomUUID(), definitions?: readonly Loose[]) {
     if (this.provider === "codex") return codexExecutor(this.getMessages(), invocationId, definitions, undefined, this.onUsage);
     if (this.provider === "claude-code") return claudeExecutor(this.getMessages(), invocationId, this.onUsage);
-    if (this.provider === "vcoder") return vcoderExecutor(this.getMessages(), invocationId, this.onUsage, undefined, { streamActivity: this.streamActivity, deliverFinalText: this.deliverFinalText, ...(this.computerUse === undefined ? {} : { computerUse: this.computerUse }) });
+    if (this.provider === "vcoder") return vcoderExecutor(this.getMessages(), invocationId, this.onUsage, undefined, { streamActivity: this.streamActivity, deliverFinalText: this.deliverFinalText, ...(this.computerUse === undefined ? {} : { computerUse: this.computerUse }), ...(this.conversationId === undefined ? {} : { conversationId: this.conversationId }) });
     return openRouterExecutor(this.getMessages(), invocationId, definitions, undefined, this.onUsage);
   }
 }
 
-export function createProviderPromptSession(provider: RoutedProvider, options?: { readonly streamActivity?: boolean; readonly deliverFinalText?: boolean; readonly computerUse?: ComputerUseProvider }): { getModelId(): string; getExecutor(state?: unknown): PromptExecutor } {
+export function createProviderPromptSession(provider: RoutedProvider, options?: { readonly streamActivity?: boolean; readonly deliverFinalText?: boolean; readonly computerUse?: ComputerUseProvider; readonly conversationId?: string }): { getModelId(): string; getExecutor(state?: unknown): PromptExecutor } {
   const modelId = provider === "codex" ? configuredCodexModel() : provider === "claude-code" ? "claude-code" : provider === "vcoder" ? "vcoder" : process.env.SAND_OPENROUTER_MODEL?.trim() || "openai/gpt-5.2";
-  return { getModelId: () => modelId, getExecutor: state => new ProviderPromptExecutor(provider, Array.isArray(state) ? state as ProviderMessage[] : undefined, usage => recordRoutedUsage(provider, usage), options?.streamActivity === true, options?.deliverFinalText === true, options?.computerUse) };
+  return { getModelId: () => modelId, getExecutor: state => new ProviderPromptExecutor(provider, Array.isArray(state) ? state as ProviderMessage[] : undefined, usage => recordRoutedUsage(provider, usage), options?.streamActivity === true, options?.deliverFinalText === true, options?.computerUse, options?.conversationId) };
 }
 
 

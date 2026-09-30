@@ -17,13 +17,15 @@ function record(value: unknown): Record<string, any> | null {
   return typeof value === "object" && value != null && !Array.isArray(value) ? value as Record<string, any> : null;
 }
 
+// `resolve` is consulted on every call so one long-lived bridge (and thus one
+// stable MCP URL bound to a reused VCoder session) can follow the latest
+// turn's box context/dependencies.
 export async function createVcoderComputerMcpBridge<Context>(
-  deps: ComputerToolDependencies<Context>,
-  context: Context,
+  resolve: () => { readonly deps: ComputerToolDependencies<Context>; readonly context: Context },
 ): Promise<{ readonly url: string; close(): Promise<void> }> {
   const secret = randomUUID();
-  const screenshotTool = createScreenshotTool(deps);
-  const computerTool = createComputerTool(deps);
+  const tools = () => { const { deps, context } = resolve(); return { context, screenshotTool: createScreenshotTool(deps), computerTool: createComputerTool(deps) }; };
+  const computerTool = tools().computerTool;
   const server = createServer(async (request, response) => {
     if (request.method !== "POST" || request.url !== `/mcp/${secret}`) { response.writeHead(404).end(); return; }
     let body = "";
@@ -65,6 +67,7 @@ export async function createVcoderComputerMcpBridge<Context>(
         const name = params?.name;
         const args = params?.arguments ?? {};
         const toolCallId = randomUUID();
+        const { context, screenshotTool, computerTool } = tools();
         if (name === "screenshot") {
           const result = await screenshotTool.execute({}, { context, toolCallId });
           reply({ content: [{ type: "text", text: screenshotTool.render(result).content }] });

@@ -199,7 +199,7 @@ export async function createTurnAgentRunContext<ContextValue>(
     // text, which the chat never renders; deliverFinalText lets the provider
     // executor route the final reply through a real SendMessage call. Subagent
     // and silence-allowed (e.g. quiet routine) turns keep the text internal.
-    : createProviderPromptSession(inferenceProvider, { streamActivity: true, deliverFinalText: !input.isSubagentRunner && !input.isSilenceAllowed, ...(input.routedComputerUse === undefined ? {} : { computerUse: input.routedComputerUse }) }) as unknown as TurnAgentPromptSession;
+    : createProviderPromptSession(inferenceProvider, { streamActivity: true, deliverFinalText: !input.isSubagentRunner && !input.isSilenceAllowed, ...(input.routedComputerUse === undefined ? {} : { computerUse: input.routedComputerUse }), conversationId: input.conversationId }) as unknown as TurnAgentPromptSession;
   const summarizationSession = inferenceProvider === "cursor" ? input.inference.createSummarizationSession?.(
     input.onRequestId,
     {

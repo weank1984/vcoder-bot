@@ -328,6 +328,11 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
             return;
           }
           if (record != null) record.historyFingerprint = options?.nextHistoryFingerprint;
+          if (event.reason === "max_turns_reached") {
+            // Never stop silently: tell the user the turn hit the step limit.
+            deliveredMessages += 1;
+            queue.push({ type: "message", text: `（已达到单轮 ${VCODER_MAX_TURNS} 步上限，任务可能还没做完。回复"继续"我接着做。）` });
+          }
           const fallbackText = textSegments.map(segment => segment.trim()).filter(segment => segment.length > 0).join("\n\n");
           queue.finish();
           resultDeferred.resolve({ text: fallbackText, deliveredMessages, usage: cumulativeUsage });
@@ -357,7 +362,10 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
           workingDirectory: home.workingDirectory,
           settings: {
             permissionMode: "default",
-            maxTurns: options?.maxTurns ?? 16,
+            // Model requests per user message. 16 cut real work (a PM bot
+            // setting up a group used all 16 on exploration) mid-task with
+            // no message; runaway loops are still bounded.
+            maxTurns: options?.maxTurns ?? VCODER_MAX_TURNS,
           },
           ...(mcpServers.length === 0 ? {} : { mcpServers }),
         });
@@ -378,6 +386,8 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
 
   return { chunks: queue[Symbol.asyncIterator](), result: resultDeferred.promise };
 }
+
+const VCODER_MAX_TURNS = 60;
 
 const MESSAGING_TOOLS = new Set(["SendUserMessage", "Brief", "SendMessage"]);
 

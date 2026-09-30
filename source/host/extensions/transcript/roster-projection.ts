@@ -10,6 +10,11 @@ import { isSandSubagentId } from "../../../shared/agents/subagents.js";
 import { transcriptReplicaKey } from "../../../shared/ordering.js";
 import { SEND_MESSAGE_TOOL_CALL_OUTLINE_NAME } from "../../runner/conversation-outline.js";
 import { mergeAsyncTasks } from "./async-task-union.js";
+import {
+  listVCoderBackgroundTasks,
+  onVCoderBackgroundTasksChanged,
+  vcoderAgentsWithBackgroundTasks,
+} from "../inference/vcoder-background-tasks.js";
 import { ProfileWatch } from "./profile-watch.js";
 import { RosterEmit } from "./roster-emit.js";
 import { RosterSearch } from "./roster-search.js";
@@ -53,6 +58,12 @@ export class RosterProjection {
     this.search = new RosterSearch(tm);
     this.rosterSearch = this.search;
     this.lastKnownAgentNames = this.profileWatch.lastKnownAgentNames;
+    // VCoder background shells/subagents: flip the avatar's running state
+    // and refresh the async-tasks panel when one starts or ends.
+    onVCoderBackgroundTasksChanged((agentId) => {
+      void this.emitAgentUpdate(agentId);
+      this.emitAsyncTasksForAgent(agentId);
+    });
   }
 
   get cachedAgentSummaries(): any[] {
@@ -238,7 +249,10 @@ export class RosterProjection {
   mergedAsyncTasks(parentAgentId: string): any[] {
     if (this.tm.sessions.deletedAgentIds.has(parentAgentId)) return [];
     const cachedRunner = this.tm.runnerRegistry.runners.get(parentAgentId);
-    const liveUnion = [...(cachedRunner?.listAsyncTasks() ?? [])];
+    const liveUnion = [
+      ...(cachedRunner?.listAsyncTasks() ?? []),
+      ...listVCoderBackgroundTasks(parentAgentId),
+    ];
     const seen = new Set(
       liveUnion.map((task: any) => `${task.kind}\0${task.id}`),
     );
@@ -542,7 +556,7 @@ export class RosterProjection {
   }
 
   liveSubagentParentIds(): Set<string> {
-    const parents = new Set<string>();
+    const parents = new Set<string>(vcoderAgentsWithBackgroundTasks());
     for (const [agentId, sources] of this.subagentWorkSources) {
       for (const source of sources) {
         if (source.hasRunningSubagents()) parents.add(agentId);

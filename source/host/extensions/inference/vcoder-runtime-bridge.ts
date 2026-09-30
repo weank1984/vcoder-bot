@@ -105,7 +105,14 @@ function getVCoderRuntime(): Promise<VcoderCoreRuntimeImplType> {
     // settings from it.
     process.env.VCODER_HOME = home.vcoderHome;
     const { VcoderCoreRuntimeImpl } = await import("@vcoder/server/runtime");
-    return new VcoderCoreRuntimeImpl(home.workingDirectory);
+    const runtime = new VcoderCoreRuntimeImpl(home.workingDirectory);
+    // Background shells/subagents outlive the turn that started them, so
+    // they are tracked from a runtime-wide subscription, not the per-turn one.
+    const { recordVCoderBackgroundEvent } = await import("./vcoder-background-tasks.js");
+    runtime.on("event", (event: RuntimeEvent) => {
+      if (event.type === "background_shell_task" || event.type === "subagent_run") recordVCoderBackgroundEvent(event as never);
+    });
+    return runtime;
   })();
   return runtimeSingleton;
 }

@@ -10,7 +10,12 @@ import type { RecreateResult } from "./box-recreate-commands.js";
 import type { SandRemoteHostConnector } from "./box-host-connector.js";
 import type { GatewayConnection } from "./gateway-descriptor-cache.js";
 
-export const LOCAL_DOCKER_BOX_IMAGE = "public.ecr.aws/k0i0n2g5/cursorenvironments/universal:sand-box-latest";
+// Pinned by digest: the upstream `sand-box-latest` tag floats, so another
+// machine could pull a different box. Bump deliberately (see README).
+export const LOCAL_DOCKER_BOX_IMAGE = "public.ecr.aws/k0i0n2g5/cursorenvironments/universal@sha256:d71300bb987a160723d602bece1fd6543be098eb41d4d00fe0f9735f2fc683c7";
+// Containers created before the pin; replaced automatically (data lives on
+// the named volume, so nothing is lost).
+const LEGACY_LOCAL_DOCKER_BOX_IMAGES = new Set(["public.ecr.aws/k0i0n2g5/cursorenvironments/universal:sand-box-latest"]);
 export const LOCAL_DOCKER_BOX_CONTAINER = "grok-bot-local-vm";
 export const LOCAL_DOCKER_GATEWAY_URL = "http://127.0.0.1:1340";
 export const LOCAL_DOCKER_OWNER_LABEL = "com.grok-bot.local-vm=1";
@@ -217,9 +222,11 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
   if (!daemon.ok) throw new Error(`Local Docker VM is selected, but Docker is unavailable: ${daemon.output || "start Docker and try again"}`);
   const inspected = await inspectContainer();
   if (inspected.exists && !inspected.owned) throw new Error(`Local Docker VM cannot use ${LOCAL_DOCKER_BOX_CONTAINER}: an unowned container already has that name.`);
-  if (inspected.exists && inspected.image !== LOCAL_DOCKER_BOX_IMAGE) throw new Error(`Local Docker VM container uses unexpected image ${inspected.image}. Remove it explicitly before changing images.`);
+  const isLegacyImage = inspected.exists && LEGACY_LOCAL_DOCKER_BOX_IMAGES.has(inspected.image);
+  if (inspected.exists && !isLegacyImage && inspected.image !== LOCAL_DOCKER_BOX_IMAGE) throw new Error(`Local Docker VM container uses unexpected image ${inspected.image}. Remove it explicitly before changing images.`);
   const isStale = (state: { schemaVersion: string; hostSha256: string; vcoderSettingsSha256: string; hasInferenceCredential: boolean; inferenceProvider: string }): boolean =>
-    state.schemaVersion !== LOCAL_DOCKER_SCHEMA_VERSION
+    isLegacyImage
+    || state.schemaVersion !== LOCAL_DOCKER_SCHEMA_VERSION
     || state.hostSha256 !== hostBundle.sha256
     || state.vcoderSettingsSha256 !== (vcoder?.sha256 ?? "")
     || state.inferenceProvider !== inferenceProvider

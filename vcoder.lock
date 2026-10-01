@@ -1,0 +1,3 @@
+# VCoder revision this repo is built and tested against (see scripts/setup-vcoder.sh).
+VCODER_REPO=https://github.com/weank1984/VCoder.git
+VCODER_COMMIT=7ae0168b2e28e89484e36006654db10084c1e8eb

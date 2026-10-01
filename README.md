@@ -70,7 +70,7 @@
 
 Cursor 为默认选项。Claude Code 和 Codex 在本地客户端已认证的情况下无需额外配置 API key。应用在路由对话中保留了流式响应、思考状态、表情反应、富文本插件提及以及 MCP 工具执行。
 
-启用本地 Docker 沙箱后，VCoder 遵循原版 Grok Bot 的拓扑结构：对话轮次在 box 内运行，host 直接在其中启动一个预置的 Linux 版 VCoder CLI，因此文件与 shell 副作用都落在 box 的文件系统上。将 `SAND_VCODER_BOX_CLI_PATH` 指向一个 Linux(x64 baseline) 的 `vcoder-cli` 构建产物即可完成预置。
+启用本地 Docker 沙箱后，VCoder 以内嵌运行时（`@vcoder/server` 的 `VcoderCoreRuntimeImpl`）的形式跑在 box 内的 host 进程里，不再需要单独的 Linux 版 `vcoder-cli`；文件与 shell 副作用都落在 box 的文件系统上。完整配置步骤见下文"VCoder + 本地 Docker 沙箱"。
 
 **Usage & Billing** 展示的是本地记录的请求与 token 用量总计（仅针对会返回用量数据的 provider）。这些数字是活动记录，并非权威的 provider 账单。
 
@@ -103,23 +103,26 @@ Router 页面还有一个 **Use local Docker VM** 开关。启用后，Grok Bot 
 
 - Apple Silicon 芯片的 macOS
 - Node.js 26.5.x
+- pnpm 10（`corepack enable`，用于构建 VCoder）
 - Xcode Command Line Tools
 - Git LFS
-- Docker Desktop（可选，仅本地沙箱需要）
+- Docker Desktop（本地沙箱需要）
 - 若选用对应路由，需要本地已有 Claude Code 或 Codex 认证
 
 ## 快速开始
+
+本仓库通过 `package.json` 中的 `"@vcoder/*": "file:../VCoder/packages/*"` 链接同级目录下的 [VCoder](https://github.com/weank1984/VCoder)，使用的版本固定在 `vcoder.lock`。
 
 ```sh
 git clone https://github.com/weank1984/vcoder-bot.git
 cd vcoder-bot
 git lfs install
 git lfs pull
+scripts/setup-vcoder.sh     # 克隆 ../VCoder，切到 vcoder.lock 固定的提交并构建
 npm ci
 npm run bootstrap
 npm run check
 npm run package
-open "dist/Grok Bot 0.18 Reconstructed.app"
 ```
 
 `npm run bootstrap` 首先使用 Git LFS 保存的锁定版本 0.18.0 DMG 副本。若该归档不存在，则回退到原始公开下载地址；也可以通过 `GROK_BOT_018_APP` 指向一份已有的应用副本。Bootstrap 会校验 DMG 和 `app.asar`，缓存匹配的 Electron 运行时，并还原被 `.gitignore` 忽略的 `src/app/dist` 构建输入。
@@ -131,6 +134,37 @@ dist/Grok Bot 0.18 Reconstructed.app
 ```
 
 重建版安装包在打包阶段会禁用上游更新器，并默认关闭上游 Sentry 与遥测上报。显式提供的环境变量配置仍会被尊重。
+
+## VCoder + 本地 Docker 沙箱
+
+当前的主要使用方式：所有 bot 都走 VCoder 推理，运行在本地 Docker 容器里。
+
+1. **模型凭据**：写入 `~/.vcoder/settings.json` 的 `env` 字段，App 会把它同步进容器（不进仓库）：
+
+   ```json
+   { "env": { "DEEPSEEK_AUTH_TOKEN": "sk-..." } }
+   ```
+
+   默认使用 DeepSeek 官方 Anthropic 端点（provider `deepseek`，model `deepseek-v4-flash`），可用 `SAND_VCODER_PROVIDER` / `SAND_VCODER_MODEL` 覆盖。
+
+2. **安装并启动**：
+
+   ```sh
+   rm -rf "/Applications/Grok Bot 0.18 Reconstructed.app"
+   ditto "dist/Grok Bot 0.18 Reconstructed.app" "/Applications/Grok Bot 0.18 Reconstructed.app"
+   scripts/run-vcoder-bot.sh
+   ```
+
+3. **App 设置**：在 **Settings → Router** 中选择 **VCoder**，并打开 **Use local Docker VM**。首次启动会拉取 box 镜像（约 4.6GB，按 digest 固定在 `source/electron-main/box/local-docker-host-connector.ts` 的 `LOCAL_DOCKER_BOX_IMAGE`）。
+
+4. **更新后重建容器**：重新安装 App 后容器不一定会自动替换，需手动执行：
+
+   ```sh
+   docker rm -f grok-bot-local-vm   # bot、群和聊天记录在数据卷 grok-bot-local-vm-data 中，不会丢失
+   scripts/run-vcoder-bot.sh
+   ```
+
+升级依赖时：VCoder 提交后执行 `scripts/setup-vcoder.sh --pin` 更新 `vcoder.lock`；更换 box 镜像时同步修改 `LOCAL_DOCKER_BOX_IMAGE` 的 digest 及 `tests/publication-packaging.test.mjs`。
 
 ## 架构
 

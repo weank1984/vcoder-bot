@@ -368,7 +368,7 @@ function splitVCoderTurnInput(messages: readonly ProviderMessage[]): { readonly 
 // mid-turn (ack → progress → result) instead of one synthesized message at
 // the end. Plain assistant text is scratchpad: shown only as activity, and
 // delivered as a fallback reply only if the model sent no message at all.
-function vcoderExecutor(messages: readonly ProviderMessage[], invocationId: string, onUsage?: (usage: UsageRecord) => void, mcpServerUrl?: string, options?: { readonly streamActivity?: boolean; readonly deliverFinalText?: boolean; readonly silenceAllowed?: boolean; readonly groupRoomTurn?: boolean; readonly computerUse?: ComputerUseProvider; readonly agentMessaging?: AgentMessagingProvider; readonly conversationId?: string }) {
+function vcoderExecutor(messages: readonly ProviderMessage[], invocationId: string, onUsage?: (usage: UsageRecord) => void, mcpServerUrl?: string, options?: { readonly streamActivity?: boolean; readonly deliverFinalText?: boolean; readonly silenceAllowed?: boolean; readonly groupRoomTurn?: boolean; readonly computerUse?: ComputerUseProvider; readonly agentMessaging?: AgentMessagingProvider; readonly conversationId?: string; readonly signal?: AbortSignal }) {
   const streamActivity = options?.streamActivity === true;
   const deliverMessages = options?.deliverFinalText === true;
   // Silence-allowed turns (woken by another bot, a routine, a background
@@ -403,7 +403,7 @@ function vcoderExecutor(messages: readonly ProviderMessage[], invocationId: stri
     const fullPrompt = vcoderSeedPrompt(messages);
     const split = options?.conversationId == null ? null : splitVCoderTurnInput(messages);
     const handle = split == null || split.newInput.trim().length === 0
-      ? runVCoderRuntimeTurn(fullPrompt, { ...(computerUsePromptAddendum == null ? {} : { systemPromptAddendum: computerUsePromptAddendum }), mcpServers })
+      ? runVCoderRuntimeTurn(fullPrompt, { ...(computerUsePromptAddendum == null ? {} : { systemPromptAddendum: computerUsePromptAddendum }), mcpServers, ...(options?.signal == null ? {} : { signal: options.signal }) })
       : runVCoderRuntimeTurn(split.newInput, {
         ...(computerUsePromptAddendum == null ? {} : { systemPromptAddendum: computerUsePromptAddendum }),
         mcpServers,
@@ -411,6 +411,7 @@ function vcoderExecutor(messages: readonly ProviderMessage[], invocationId: stri
         fullPrompt,
         historyFingerprint: split.historyFingerprint,
         nextHistoryFingerprint: split.nextHistoryFingerprint,
+        ...(options?.signal == null ? {} : { signal: options.signal }),
       });
     let messageIndex = 0;
     const deliveredTexts: string[] = [];
@@ -479,12 +480,17 @@ function openRouterExecutor(messages: readonly ProviderMessage[], invocationId: 
   return { fullStream: result.fullStream, response: result.response, usage: result.usage, extendedUsage, providerMetadata: result.providerMetadata, invocationId: Promise.resolve(invocationId) };
 }
 
+function contextSignal(ctx: unknown): AbortSignal | undefined {
+  const signal = (ctx as { signal?: unknown } | null)?.signal;
+  return signal instanceof AbortSignal ? signal : undefined;
+}
+
 class ProviderPromptExecutor extends BasePromptExecutor<ProviderMessage> {
   constructor(readonly provider: RoutedProvider, initialMessages?: readonly ProviderMessage[], readonly onUsage?: (usage: UsageRecord) => void, readonly streamActivity = false, readonly deliverFinalText = false, readonly silenceAllowed = false, readonly groupRoomTurn = false, readonly computerUse?: ComputerUseProvider, readonly conversationId?: string, readonly agentMessaging?: AgentMessagingProvider) { super(new BasePromptBuilder(initialMessages)); }
-  stream(_ctx: unknown, invocationId = crypto.randomUUID(), definitions?: readonly Loose[]) {
+  stream(ctx: unknown, invocationId = crypto.randomUUID(), definitions?: readonly Loose[]) {
     if (this.provider === "codex") return codexExecutor(this.getMessages(), invocationId, definitions, undefined, this.onUsage);
     if (this.provider === "claude-code") return claudeExecutor(this.getMessages(), invocationId, this.onUsage);
-    if (this.provider === "vcoder") return vcoderExecutor(this.getMessages(), invocationId, this.onUsage, undefined, { streamActivity: this.streamActivity, deliverFinalText: this.deliverFinalText, silenceAllowed: this.silenceAllowed, groupRoomTurn: this.groupRoomTurn, ...(this.computerUse === undefined ? {} : { computerUse: this.computerUse }), ...(this.conversationId === undefined ? {} : { conversationId: this.conversationId }), ...(this.agentMessaging === undefined ? {} : { agentMessaging: this.agentMessaging }) });
+    if (this.provider === "vcoder") return vcoderExecutor(this.getMessages(), invocationId, this.onUsage, undefined, { streamActivity: this.streamActivity, deliverFinalText: this.deliverFinalText, silenceAllowed: this.silenceAllowed, groupRoomTurn: this.groupRoomTurn, ...(this.computerUse === undefined ? {} : { computerUse: this.computerUse }), ...(this.conversationId === undefined ? {} : { conversationId: this.conversationId }), ...(this.agentMessaging === undefined ? {} : { agentMessaging: this.agentMessaging }), ...(contextSignal(ctx) === undefined ? {} : { signal: contextSignal(ctx)! }) });
     return openRouterExecutor(this.getMessages(), invocationId, definitions, undefined, this.onUsage);
   }
 }

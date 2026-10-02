@@ -11,6 +11,7 @@ export const COORDINATOR_MAIN_METHOD_TABLE = {
   updateForeverBox: { args: "object" },
   setWindowFocused: { args: "object" },
   getHostStatus: { args: "none" },
+  getVCoderStatus: { args: "none" },
   listAgents: { args: "none" },
   createAgent: { args: "object" },
   deleteAgents: { args: "object" },

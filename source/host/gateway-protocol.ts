@@ -100,6 +100,7 @@ export const SAND_GATEWAY_COMMANDS = {
   clearBoxStoreNow: (api: GatewayApi) => api.clearBoxStoreNow(),
   updateHostNow: (api: GatewayApi, body: string) => api.updateHostNow(parseCommandArgs(body)),
   getHostStatus: (api: GatewayApi) => api.getHostStatus(),
+  getVCoderStatus: (api: GatewayApi) => api.getVCoderStatus(),
   setBoxMigrating: (api: GatewayApi, body: string) => api.setBoxMigrating(parseCommandArgs(body)),
   prepareBoxForRecreate: (api: GatewayApi) => api.prepareBoxForRecreate(),
   resumeBoxAfterRecreate: (api: GatewayApi, body: string) => api.resumeBoxAfterRecreate(parseCommandArgs(body)),

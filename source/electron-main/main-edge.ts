@@ -49,6 +49,7 @@ export interface MainEdgeDeps {
   readonly experiments: UnknownRecord;
   readonly syncHostSettingsToBox: (settings: UnknownRecord) => Promise<UnknownRecord | null>;
   readonly readHostSettingsFromBox: () => Promise<UnknownRecord>;
+  readonly readVCoderStatusFromBox?: () => Promise<unknown>;
   readonly recordLocalToolApproval: (approval: { id: string; action: string; target: string }) => Promise<void>;
   readonly clearLocalToolApprovals: () => Promise<void>;
   readonly getComputerUseModelOverride: () => unknown;
@@ -114,6 +115,7 @@ export function createMainEdgeHandlers(deps: MainEdgeDeps): HandlerMap {
     getHostSidebarSections: async () => (await deps.readHostSettingsFromBox()).sidebarSections ?? null,
     setHostSidebarSections: (raw) => echo(deps, "sidebarSections", req(raw).sections, "sidebar sections"),
     getAvailableModels: () => deps.fetchAvailableModels(),
+    getVCoderStatus: async () => deps.readVCoderStatusFromBox == null ? null : await deps.readVCoderStatusFromBox().catch(() => null),
     getInferenceRouter: async () => { const settings = await deps.readHostSettingsFromBox().catch(() => ({} as UnknownRecord)); const provider = invoke(deps.settingsStore, "getInferenceProvider"); return { provider: isSandInferenceProvider(provider) ? provider : "cursor", usage: settings.inferenceRouterUsage ?? invoke(deps.settingsStore, "getInferenceRouterUsage") ?? null, local: getLocalInferenceCliStatus({ boxRuntime: String(invoke(deps.settingsStore, "getBoxRuntime")) }) }; },
     setInferenceRouter: async (raw) => { const provider = req(raw).provider; invariant(isSandInferenceProvider(provider), "Unknown inference provider."); invoke(deps.settingsStore, "setInferenceProvider", provider); const settings = await deps.syncHostSettingsToBox({ inferenceProvider: provider }).catch(() => null); return { provider, usage: settings?.inferenceRouterUsage ?? invoke(deps.settingsStore, "getInferenceRouterUsage") ?? null, local: getLocalInferenceCliStatus({ boxRuntime: String(invoke(deps.settingsStore, "getBoxRuntime")) }) }; },
     getBoxRuntime: async () => { const mode = invoke(deps.settingsStore, "getBoxRuntime"); invariant(isSandBoxRuntime(mode), "Unknown box runtime."); return { mode, status: await getLocalDockerStatus(String(Reflect.get(deps.settingsStore, "settingsPath"))) }; },

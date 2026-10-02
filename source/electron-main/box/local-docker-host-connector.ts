@@ -28,15 +28,13 @@ export const LOCAL_DOCKER_SCHEMA_VERSION = "7";
 // CLI executor used to — so settings.json is still staged and mounted, just
 // without VCODER_BOX_CLI_ENV or the CLI binary path.
 const READY_TIMEOUT_MS = 180_000;
-// DeepSeek's official Anthropic endpoint (VCoder's built-in "deepseek"
-// provider, credential DEEPSEEK_AUTH_TOKEN). Chosen over the Voyah gateway
-// because the gateway corrupts images inside tool_result blocks in its
-// Anthropic→OpenAI conversion, which blinds computer-use screenshots
-// (verified 2026-09-30 with solid-colour probes). The official endpoint
-// accepts deepseek-v4-flash (VCoder's registry ID) and serves it as such.
+// Aliyun Bailian Token Plan (VCoder's built-in "dashscope" provider, an
+// Anthropic Messages endpoint). Not the Voyah gateway: it corrupts images
+// inside tool_result blocks in its Anthropic→OpenAI conversion, which blinds
+// computer-use screenshots (verified 2026-09-30 with solid-colour probes).
 // Override with SAND_VCODER_PROVIDER / SAND_VCODER_MODEL.
-export const DEFAULT_BOX_VCODER_PROVIDER = "deepseek";
-export const DEFAULT_BOX_VCODER_MODEL = "deepseek-v4-flash";
+export const DEFAULT_BOX_VCODER_PROVIDER = "dashscope";
+export const DEFAULT_BOX_VCODER_MODEL = "deepseek-v4.1-flash";
 const OPTIONAL_CREDENTIAL_TIMEOUT_MS = 3_000;
 
 export interface LocalDockerStatus {
@@ -267,6 +265,8 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
       // renderVCoderRuntimeSettings() copies over via readVCoderSettingsEnv().
       "--env", `SAND_VCODER_MODEL=${process.env.SAND_VCODER_MODEL?.trim() || DEFAULT_BOX_VCODER_MODEL}`,
       "--env", `SAND_VCODER_PROVIDER=${process.env.SAND_VCODER_PROVIDER?.trim() || DEFAULT_BOX_VCODER_PROVIDER}`,
+      ...(process.env.SAND_VCODER_EFFORT?.trim() ? ["--env", `SAND_VCODER_EFFORT=${process.env.SAND_VCODER_EFFORT.trim()}`] : []),
+      ...(process.env.SAND_VCODER_CONTEXT_WINDOW?.trim() ? ["--env", `SAND_VCODER_CONTEXT_WINDOW=${process.env.SAND_VCODER_CONTEXT_WINDOW.trim()}`] : []),
       ...(inferenceCredential == null ? [] : ["--env", "SAND_DEV_INFERENCE_TOKEN_FILE=/run/grok-bot/inference.json", "--env", `SAND_BACKEND_URL=${inferenceCredential.backendUrl}`]),
       "--publish", "127.0.0.1:1337:1337", "--publish", "127.0.0.1:1339:1339", "--publish", "127.0.0.1:1340:1340",
       "--publish", "127.0.0.1:6080:6080", "--publish", "127.0.0.1:6081:6081", "--publish", "127.0.0.1:8790:8790",

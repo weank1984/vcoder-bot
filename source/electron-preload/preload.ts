@@ -1,4 +1,5 @@
 import { CLIENT_PERSISTENCE_CHANNELS } from "../shared/persistence.js";
+import { installVCoderStatusLine } from "./vcoder-statusline.js";
 import {
   createCoordinatorPortBroker,
   wrapTransferredCoordinatorPort,
@@ -261,6 +262,7 @@ export function createDesktopPreloadBridge(options: {
       setComputerUseModel: (model: unknown) => edge("setComputerUseModel", { model }),
       getAvailableModels: () => edge("getAvailableModels"),
       getInferenceRouter: () => edge("getInferenceRouter"),
+      getVCoderStatus: () => edge("getVCoderStatus"),
       backgroundTasks: (request: Record<string, unknown>) => edge("backgroundTasks", request),
       setInferenceRouter: (provider: string) => edge("setInferenceRouter", { provider }),
       getBoxRuntime: () => edge("getBoxRuntime"),
@@ -333,7 +335,7 @@ export function installPrimaryPreloadEntrypoint(
   const coordinatorBroker = createCoordinatorPortBroker<any>({ invokeRequest: () => { void electron.ipcRenderer.invoke("sand:coordinator-port-request"); } });
   const transport = createMainEdgeTransport(electron.ipcRenderer);
   const mainEdge = bridgeRpcEdge(MAIN_RPC_CONTRACT_NAME, MAIN_RPC_METHOD_TABLE, transport, true) as MainPreloadEdge;
-  return installPrimaryPreload({
+  const installed = installPrimaryPreload({
     ipc: electron.ipcRenderer,
     webFrame: electron.webFrame,
     contextBridge: electron.contextBridge,
@@ -344,6 +346,8 @@ export function installPrimaryPreloadEntrypoint(
     devRestartEnabled,
     coordinatorBroker,
   });
+  installVCoderStatusLine({ getStatus: () => installed.desktop.agent.getVCoderStatus(), getInferenceRouter: () => installed.desktop.agent.getInferenceRouter() });
+  return installed;
 }
 
 export function loadPrimaryPreloadElectron(

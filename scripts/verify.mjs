@@ -14,6 +14,11 @@ import {
 } from "./lib/config.mjs";
 import { prepareReconstructedElectronMainArtifactFallback } from "./lib/build-asar.mjs";
 import { resolvePackagedAppArtifacts } from "./lib/packaged-app.mjs";
+import {
+  reconcileRendererArtifactInventory,
+  rendererArtifactPrefix,
+  rendererRouterExtensionPath,
+} from "./lib/router-renderer-patch.mjs";
 import { capture, run } from "./lib/process.mjs";
 import { SYSTEM_TOOLS } from "./lib/system-tools.mjs";
 
@@ -177,14 +182,15 @@ if (rendererComposition?.mode === "clean-source") {
   if (rendererProvenance.schemaVersion !== 1 || rendererProvenance.mode !== rendererComposition.mode || rendererProvenance.upstreamAppAsarSha256 !== upstreamAsarSha256) throw new Error("Packaged artifact renderer provenance has the wrong identity.");
   if (acceptance?.verdict !== "verified" || acceptance.provenance !== rendererProvenancePath || acceptance.fileCount !== rendererProvenance.fileCount || acceptance.inventorySha256 !== rendererProvenance.inventorySha256) throw new Error("Packaged artifact renderer acceptance does not match its provenance.");
   if (!Array.isArray(rendererProvenance.files) || rendererProvenance.files.length !== rendererProvenance.fileCount) throw new Error("Packaged artifact renderer provenance has an invalid file inventory.");
-  const declaredPaths = new Set();
-  for (const file of rendererProvenance.files) {
-    if (typeof file.path !== "string" || declaredPaths.has(file.path)) throw new Error("Packaged artifact renderer provenance contains a missing or duplicate path.");
-    declaredPaths.add(file.path);
-    const bytes = extractFile(builtAsar, `dist/renderer/${file.path}`);
-    if (bytes.byteLength !== file.bytes || sha256(bytes) !== file.sha256) throw new Error(`Packaged artifact renderer differs from its checksum inventory: ${file.path}`);
-  }
-  const packagedPaths = rendererListing.filter(entry => entry.startsWith("dist/renderer/")).map(entry => entry.slice("dist/renderer/".length)).filter(Boolean);
+  if (!listing.has(`/${rendererRouterExtensionPath}`)) throw new Error(`Packaged renderer is missing ${rendererRouterExtensionPath}.`);
+  const routerExtension = JSON.parse(extractFile(builtAsar, rendererRouterExtensionPath).toString("utf8"));
+  reconcileRendererArtifactInventory({
+    files: rendererProvenance.files,
+    extension: routerExtension,
+    readPackaged: relative => extractFile(builtAsar, `${rendererArtifactPrefix}/${relative}`),
+  });
+  const declaredPaths = new Set(rendererProvenance.files.map(file => file.path));
+  const packagedPaths = rendererListing.filter(entry => entry.startsWith(`${rendererArtifactPrefix}/`)).map(entry => entry.slice(rendererArtifactPrefix.length + 1)).filter(Boolean);
   const undeclaredFiles = packagedPaths.filter(candidate => !declaredPaths.has(candidate) && ![...declaredPaths].some(file => file.startsWith(`${candidate}/`)));
   if (undeclaredFiles.length > 0 || [...declaredPaths].some(file => !packagedPaths.includes(file))) throw new Error("Packaged artifact renderer contains undeclared or missing files.");
 } else {

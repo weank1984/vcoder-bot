@@ -615,6 +615,12 @@ export function createHostGatewayApi(
     readAttachmentText: (args: any) => method(attachments, "readText")(args),
     readAttachmentChunk: (args: any) => method(attachments, "readChunk")(args),
     getHostSettings: () => method(settings, "getHostSettings")(),
+    getVCoderStatus: async () => {
+      const agentId = (manager as any).sessions?.getAnnouncedActiveAgentId?.() ?? method(manager, "getActiveAgentId")();
+      if (agentId == null) return null;
+      const { getVCoderAgentStatus } = await import("./extensions/inference/vcoder-agent-status.js");
+      return getVCoderAgentStatus(String(agentId));
+    },
     setHostSettings: (args: any) => {
       const result = method(settings, "setHostSettings")(args);
       if (args.localToolPermission !== undefined) {

@@ -44,3 +44,30 @@ test("vcoder permission policy denies interactive-UI tools with guidance", async
     assert.match(decision.reason, /SendUserMessage/);
   }
 });
+
+test("reattaches the newest on-disk session generation after a host restart", async () => {
+  const { latestTranscriptGeneration } = await loadModule();
+  const home = await mkdtemp(path.join(os.tmpdir(), "grok-vcoder-gen-"));
+  try {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const dir = path.join(home, "projects", "-workspace");
+    await mkdir(dir, { recursive: true });
+    assert.equal(latestTranscriptGeneration({ vcoderHome: home }, "abc"), null);
+    await writeFile(path.join(dir, "grok-abc.jsonl"), "");
+    assert.equal(latestTranscriptGeneration({ vcoderHome: home }, "abc"), 0);
+    await writeFile(path.join(dir, "grok-abc-g2.jsonl"), "");
+    await writeFile(path.join(dir, "grok-abc-g1.jsonl"), "");
+    await writeFile(path.join(dir, "grok-abcd-g9.jsonl"), "");
+    await writeFile(path.join(dir, "grok-abc.metadata.json"), "");
+    assert.equal(latestTranscriptGeneration({ vcoderHome: home }, "abc"), 2);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("bot turns default to low reasoning effort, overridable by env", async () => {
+  const { vcoderEffort } = await loadModule();
+  assert.equal(vcoderEffort({}), "low");
+  assert.equal(vcoderEffort({ SAND_VCODER_EFFORT: "Medium" }), "medium");
+  assert.equal(vcoderEffort({ SAND_VCODER_EFFORT: "bogus" }), "low");
+});

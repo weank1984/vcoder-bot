@@ -2,6 +2,10 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+export const rendererRouterExtensionPath = "dist/renderer-router-extension.json";
+export const rendererRouterExtensionMode = "original-renderer-settings-extension";
+export const rendererArtifactPrefix = "dist/renderer";
+
 const REGISTRY_BEFORE = 'const wDn=[{id:"general",label:"General",icon:"settings-gear"},{id:"usage",label:"Usage & Billing",icon:"chart-bars"},{id:"beta",label:"Updates",icon:"cloud-download"}]';
 const REGISTRY_AFTER = 'const wDn=[{id:"general",label:"General",icon:"settings-gear"},{id:"router",label:"Router",icon:"git-branch"},{id:"usage",label:"Usage & Billing",icon:"chart-bars"},{id:"beta",label:"Updates",icon:"cloud-download"}]';
 const GENERAL_BEFORE = 'Q=x==="general"?a.jsx(Te,{children:a.jsx(Sa,{auth:t})}):null';
@@ -87,12 +91,75 @@ export async function applyOriginalRendererRouterPatch({ stageRoot }) {
   }
   const record = {
     schemaVersion: 1,
-    mode: "original-renderer-settings-extension",
+    mode: rendererRouterExtensionMode,
     chunks: changes,
     features: ["settings-router-provider", "settings-local-docker-vm", "usage-current-provider"],
     transformations: ["settings-registry", "router-panel", "usage-panel"],
   };
-  const provenancePath = path.join(stageRoot, "dist", "renderer-router-extension.json");
+  const provenancePath = path.join(stageRoot, rendererRouterExtensionPath);
   await writeFile(provenancePath, `${JSON.stringify(record, null, 2)}\n`);
   return { ...record, provenancePath, provenanceBytes: (await stat(provenancePath)).size };
+}
+
+const sha256Pattern = /^[0-9a-f]{64}$/;
+
+/**
+ * The checksum-pinned renderer inventory describes the untouched 0.18 artifact,
+ * while the staged renderer also carries the recorded Router settings extension.
+ * Accept a packaged file only when it matches the pinned artifact byte-for-byte,
+ * or when it is exactly the declared patched result of a pinned original.
+ */
+export function reconcileRendererArtifactInventory({ files, extension, readPackaged }) {
+  if (!Array.isArray(files)) throw new Error("Pinned renderer inventory is not a file list.");
+  if (extension?.schemaVersion !== 1 || extension.mode !== rendererRouterExtensionMode) {
+    throw new Error("Router renderer extension record has the wrong identity.");
+  }
+  if (!Array.isArray(extension.chunks) || extension.chunks.length === 0) {
+    throw new Error("Router renderer extension record declares no chunks.");
+  }
+  const declared = new Map();
+  for (const chunk of extension.chunks) {
+    if (typeof chunk?.role !== "string" || chunk.role.length === 0
+      || typeof chunk.path !== "string" || !chunk.path.startsWith(`${rendererArtifactPrefix}/`)) {
+      throw new Error(`Router renderer extension declares an invalid chunk: ${JSON.stringify(chunk)}`);
+    }
+    const relative = chunk.path.slice(rendererArtifactPrefix.length + 1);
+    if (relative.length === 0 || declared.has(relative)) {
+      throw new Error(`Router renderer extension declares a duplicate chunk: ${chunk.path}`);
+    }
+    for (const key of ["original", "patched"]) {
+      const entry = chunk[key];
+      if (entry == null || !Number.isInteger(entry.bytes) || typeof entry.sha256 !== "string" || !sha256Pattern.test(entry.sha256)) {
+        throw new Error(`Router renderer extension chunk has no ${key} record: ${chunk.path}`);
+      }
+    }
+    if (chunk.original.sha256 === chunk.patched.sha256) {
+      throw new Error(`Router renderer extension chunk declares no change: ${chunk.path}`);
+    }
+    declared.set(relative, chunk);
+  }
+  const inventoried = new Set();
+  for (const file of files) {
+    if (typeof file?.path !== "string" || !Number.isInteger(file.bytes) || typeof file.sha256 !== "string" || inventoried.has(file.path)) {
+      throw new Error("Pinned renderer inventory contains a missing or duplicate path.");
+    }
+    inventoried.add(file.path);
+    const bytes = readPackaged(file.path);
+    const chunk = declared.get(file.path);
+    if (bytes.byteLength === file.bytes && sha256(bytes) === file.sha256) {
+      if (chunk != null) throw new Error(`Router renderer extension declares a patch that is not present: ${file.path}`);
+      continue;
+    }
+    if (chunk == null) throw new Error(`Packaged artifact renderer differs from its checksum inventory: ${file.path}`);
+    if (chunk.original.bytes !== file.bytes || chunk.original.sha256 !== file.sha256) {
+      throw new Error(`Router renderer extension does not start from the pinned renderer artifact: ${file.path}`);
+    }
+    if (chunk.patched.bytes !== bytes.byteLength || chunk.patched.sha256 !== sha256(bytes)) {
+      throw new Error(`Packaged artifact renderer differs from its router extension record: ${file.path}`);
+    }
+  }
+  for (const relative of declared.keys()) {
+    if (!inventoried.has(relative)) throw new Error(`Router renderer extension patches a file outside the pinned renderer inventory: ${relative}`);
+  }
+  return [...declared.keys()].sort();
 }

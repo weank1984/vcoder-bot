@@ -15,13 +15,14 @@
 // writing this file. So provider/model selection is rendered into a
 // VCODER_HOME-scoped settings.json once per host process instead.
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { RuntimeEvent } from "@vcoder/agent-core/runtime";
 import type { VcoderCoreRuntimeImpl as VcoderCoreRuntimeImplType } from "@vcoder/server/runtime";
 
 import { getSandRootDir } from "../../host-paths.js";
+import { effectiveVCoderContextWindow, noteVCoderToolFinished, noteVCoderToolStarted, noteVCoderTurnEnded, noteVCoderTurnStarted, recordVCoderStatusEvent } from "./vcoder-agent-status.js";
 
 export interface VCoderRuntimeStreamChunk {
   readonly type: "reasoning" | "tool-activity" | "message";
@@ -67,13 +68,27 @@ function resolveVCoderRuntimeHome(): VCoderRuntimeHome {
 // ~/.vcoder/settings.json already holds this in the non-box topology; the box
 // topology has no such file, so this always writes one, scoped to
 // SAND_VCODER_RUNTIME_HOME so it never touches a real user's ~/.vcoder.
-function renderVCoderRuntimeSettings(home: VCoderRuntimeHome, options: { readonly provider?: string; readonly model?: string; readonly env: Record<string, string>; readonly outputStyle?: { readonly name: string; readonly prompt: string } }): void {
+function renderVCoderRuntimeSettings(home: VCoderRuntimeHome, options: { readonly provider?: string; readonly model?: string; readonly contextWindow?: number; readonly env: Record<string, string>; readonly outputStyle?: { readonly name: string; readonly prompt: string } }): void {
   mkdirSync(home.vcoderHome, { recursive: true });
   const settingsPath = join(home.vcoderHome, "settings.json");
   let existing: Record<string, unknown> = {};
   try { existing = JSON.parse(readFileSync(settingsPath, "utf8")) as Record<string, unknown>; } catch { existing = {}; }
+  // A trusted userSettings `providers.<builtinId>` entry merges onto the
+  // builtin definition, so this caps the declared window (e.g. 1M for
+  // deepseek) that would otherwise win over VCODER_MAX_CONTEXT_TOKENS in
+  // context_detail.
+  const existingProviders = typeof existing.providers === "object" && existing.providers != null ? existing.providers as Record<string, Record<string, unknown>> : {};
+  const providers = options.provider == null || options.contextWindow == null ? existingProviders : {
+    ...existingProviders,
+    [options.provider]: {
+      ...existingProviders[options.provider],
+      contextWindow: options.contextWindow,
+      ...(options.model == null ? {} : { contextWindows: { ...(existingProviders[options.provider]?.contextWindows as Record<string, number> | undefined), [options.model]: options.contextWindow } }),
+    },
+  };
   const merged = {
     ...existing,
+    ...(Object.keys(providers).length === 0 ? {} : { providers }),
     ...(options.provider == null ? {} : { provider: options.provider }),
     ...(options.model == null ? {} : { model: options.model }),
     ...(options.outputStyle == null ? {} : { outputStyle: options.outputStyle }),
@@ -98,7 +113,12 @@ function getVCoderRuntime(): Promise<VcoderCoreRuntimeImplType> {
     const { readVCoderSettingsEnv } = await import("../../../shared/node/inference-router-local.js");
     const provider = process.env.SAND_VCODER_PROVIDER?.trim();
     const model = process.env.SAND_VCODER_MODEL?.trim();
-    renderVCoderRuntimeSettings(home, { ...(provider == null || provider.length === 0 ? {} : { provider }), ...(model == null || model.length === 0 ? {} : { model }), env: readVCoderSettingsEnv(), outputStyle: { name: "Grok Bot chat", prompt: GROK_BOT_OUTPUT_STYLE } });
+    // Models degrade well before their declared window (deepseek-v4.1-flash
+    // declares 1M but gets slow and sloppy past ~300k), so cap the window
+    // the runtime uses for context_detail and the auto-compact threshold.
+    const contextWindow = effectiveVCoderContextWindow();
+    process.env.VCODER_MAX_CONTEXT_TOKENS ??= String(contextWindow);
+    renderVCoderRuntimeSettings(home, { ...(provider == null || provider.length === 0 ? {} : { provider }), ...(model == null || model.length === 0 ? {} : { model }), contextWindow, env: readVCoderSettingsEnv(), outputStyle: { name: "Grok Bot chat", prompt: GROK_BOT_OUTPUT_STYLE } });
     // VCODER_HOME must be set in this process's env before constructing the
     // runtime: @vcoder/agent-core's getVcoderHome() reads process.env at call
     // time (not just at import time), and every session start re-resolves
@@ -111,6 +131,7 @@ function getVCoderRuntime(): Promise<VcoderCoreRuntimeImplType> {
     const { recordVCoderBackgroundEvent } = await import("./vcoder-background-tasks.js");
     runtime.on("event", (event: RuntimeEvent) => {
       if (event.type === "background_shell_task" || event.type === "subagent_run") recordVCoderBackgroundEvent(event as never);
+      else if (event.type === "context_detail" || event.type === "context_compacted") recordVCoderStatusEvent(event as never);
     });
     return runtime;
   })();
@@ -188,12 +209,26 @@ export interface VCoderRuntimeTurnOptions {
   // fresh session seeded with fullPrompt.
   readonly historyFingerprint?: string;
   readonly nextHistoryFingerprint?: string;
+  // Aborted when Grok Bot interrupts the run (user said stop, or a new
+  // message superseded it). Without this the embedded runtime kept running
+  // the abandoned turn in the background.
+  readonly signal?: AbortSignal;
 }
 
 interface ConversationSessionRecord {
   readonly sessionId: string;
-  historyFingerprint: string | undefined;
+  // Grok Bot history fingerprints this session is consistent with. Both the
+  // pre-turn and post-turn fingerprints of the latest turn are accepted as
+  // soon as the input is sent: an interrupted, failed or still-running turn
+  // has still delivered its input to the session, and Grok Bot may or may not
+  // have recorded an assistant reply for it. Treating those as divergence
+  // re-seeded a fresh session with the whole history on every interruption.
+  acceptedFingerprints: Set<string>;
   mcpKey: string;
+}
+
+function acceptTurnFingerprints(record: ConversationSessionRecord, options: VCoderRuntimeTurnOptions | undefined): void {
+  record.acceptedFingerprints = new Set([options?.historyFingerprint, options?.nextHistoryFingerprint].filter((value): value is string => value != null));
 }
 
 // Conversation → VCoder session registry. In-memory, but backed by the
@@ -275,17 +310,19 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
       sessionId = randomUUID();
     } else {
       record = conversationSessions.get(conversationId);
-      const diverged = record != null && options?.historyFingerprint !== record.historyFingerprint;
+      const diverged = record != null && (options?.historyFingerprint == null || !record.acceptedFingerprints.has(options.historyFingerprint));
       if (record == null || diverged) {
         // First turn in this process, or Grok Bot history no longer matches
-        // what the session saw. Try the stable id first so a host restart
-        // reattaches to the on-disk transcript; on divergence move to a new
-        // generation so stale history is never replayed.
-        const generation = diverged ? (Number(/-g(\d+)$/.exec(record!.sessionId)?.[1] ?? 0) + 1) : 0;
+        // what the session saw. After a host restart reattach the newest
+        // on-disk generation (not always g0: that silently dropped whatever
+        // happened in later generations); on divergence move past every
+        // existing generation so stale history is never replayed.
+        const latest = latestTranscriptGeneration(home, conversationId);
+        const generation = diverged ? Math.max(latest ?? 0, Number(/-g(\d+)$/.exec(record!.sessionId)?.[1] ?? 0)) + 1 : latest ?? 0;
         sessionId = sessionIdForConversation(conversationId, generation);
-        const hasTranscript = !diverged && transcriptExists(home, sessionId);
+        const hasTranscript = !diverged && latest != null;
         if (!hasTranscript && options?.fullPrompt != null) content = options.fullPrompt;
-        record = { sessionId, historyFingerprint: undefined, mcpKey };
+        record = { sessionId, acceptedFingerprints: new Set(), mcpKey };
         conversationSessions.set(conversationId, record);
       } else {
         sessionId = record.sessionId;
@@ -297,6 +334,12 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
       }
     }
 
+    const onAbort = () => {
+      logTiming(sessionId, "cancelled", startedAt);
+      void runtime.cancel(sessionId).catch(error => console.error("[vcoder] cancel failed:", error));
+    };
+    if (options?.signal?.aborted === true) { clearInterval(heartbeat); const failure = new Error("VCoder turn cancelled before start"); queue.fail(failure); resultDeferred.reject(failure); return; }
+    options?.signal?.addEventListener("abort", onAbort, { once: true });
     const subscription = runtime.on("event", (event: RuntimeEvent) => {
       if (event.sessionId !== sessionId) return;
       switch (event.type) {
@@ -332,6 +375,7 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
           pendingToolNames.set(event.toolCall.id, event.toolCall.name);
           logTiming(sessionId, "tool-start", startedAt, { tool: event.toolCall.name });
           const detail = toolActivityDetail(event.toolCall.input);
+          noteVCoderToolStarted(sessionId, event.toolCall.name, detail);
           pendingToolStarts.set(event.toolCall.id, { name: event.toolCall.name, detail, at: Date.now() });
           queue.push({ type: "tool-activity", toolCallId: event.toolCall.id, toolName: event.toolCall.name, phase: "started", ...(detail == null ? {} : { detail }) });
           return;
@@ -341,6 +385,7 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
           if (toolName == null) return;
           pendingToolNames.delete(event.toolResult.id);
           pendingToolStarts.delete(event.toolResult.id);
+          noteVCoderToolFinished(sessionId);
           logTiming(sessionId, "tool-end", startedAt, { tool: toolName, isError: event.toolResult.isError === true });
           const detail = toolResultPreview(event.toolResult.content);
           queue.push({ type: "tool-activity", toolCallId: event.toolResult.id, toolName, phase: "completed", isError: event.toolResult.isError === true, ...(detail == null ? {} : { detail }) });
@@ -348,22 +393,20 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
         }
         case "session_complete": {
           subscription.dispose();
+          options?.signal?.removeEventListener("abort", onAbort);
           clearInterval(heartbeat);
+          noteVCoderTurnEnded(sessionId);
           logTiming(sessionId, "complete", startedAt, { reason: event.reason, delivered: deliveredMessages, usage: cumulativeUsage });
           if (event.reason === "cancelled" || event.reason === "error" || event.reason === "timeout" || event.reason === "blocking") {
-            // A failed turn leaves the session state uncertain; drop the
-            // fingerprint so the next turn re-validates.
-            if (record != null) record.historyFingerprint = undefined;
             const failure = new Error(event.message ?? event.error?.message ?? `VCoder runtime session ended: ${event.reason}`);
             queue.fail(failure);
             resultDeferred.reject(failure);
             return;
           }
-          if (record != null) record.historyFingerprint = options?.nextHistoryFingerprint;
           if (event.reason === "max_turns_reached") {
             // Never stop silently: tell the user the turn hit the step limit.
             deliveredMessages += 1;
-            queue.push({ type: "message", text: `（已达到单轮 ${VCODER_MAX_TURNS} 步上限，任务可能还没做完。回复"继续"我接着做。）` });
+            queue.push({ type: "message", text: `（已达到单轮步数上限，任务可能还没做完。回复"继续"我接着做。）` });
           }
           const fallbackText = textSegments.map(segment => segment.trim()).filter(segment => segment.length > 0).join("\n\n");
           queue.finish();
@@ -394,10 +437,10 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
           workingDirectory: home.workingDirectory,
           settings: {
             permissionMode: "default",
-            // Model requests per user message. 16 cut real work (a PM bot
-            // setting up a group used all 16 on exploration) mid-task with
-            // no message; runaway loops are still bounded.
-            maxTurns: options?.maxTurns ?? VCODER_MAX_TURNS,
+            effort: vcoderEffort(),
+            // No default turn cap (CLI interactive parity): a cap cut long
+            // tasks mid-way. Callers may still pass one explicitly.
+            ...(options?.maxTurns == null ? {} : { maxTurns: options.maxTurns }),
           },
           ...(mcpServers.length === 0 ? {} : { mcpServers }),
         });
@@ -405,12 +448,15 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
       } else {
         logTiming(sessionId, "session-ready", startedAt, { reused: true });
       }
+      noteVCoderTurnStarted(sessionId);
+      if (record != null) acceptTurnFingerprints(record, options);
       const addendum = options?.systemPromptAddendum;
       await runtime.sendMessage(sessionId, { content: addendum == null || addendum.length === 0 ? content : `<system-reminder>\n${addendum}\n</system-reminder>\n\n${content}`, displayContent: content });
     } catch (error) {
       subscription.dispose();
+      options?.signal?.removeEventListener("abort", onAbort);
       clearInterval(heartbeat);
-      if (record != null) record.historyFingerprint = undefined;
+      noteVCoderTurnEnded(sessionId);
       const failure = error instanceof Error ? error : new Error(String(error));
       queue.fail(failure);
       resultDeferred.reject(failure);
@@ -420,8 +466,16 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
   return { chunks: queue[Symbol.asyncIterator](), result: resultDeferred.promise };
 }
 
-const VCODER_MAX_TURNS = 60;
 const TOOL_HEARTBEAT_MS = 15_000;
+
+// Reasoning effort for bot turns. deepseek-v4.1-flash reasons 30–80s before
+// every tool call at the endpoint default, which looks like a hang in chat;
+// "low" cut thinking ~60% in a direct DashScope comparison (2026-10-01).
+// Override with SAND_VCODER_EFFORT=low|medium|high|max|auto.
+export function vcoderEffort(env: NodeJS.ProcessEnv = process.env): "low" | "medium" | "high" | "max" | "auto" {
+  const value = env.SAND_VCODER_EFFORT?.trim().toLowerCase();
+  return value === "medium" || value === "high" || value === "max" || value === "auto" || value === "low" ? value : "low";
+}
 
 const MESSAGING_TOOLS = new Set(["SendUserMessage", "Brief", "SendMessage"]);
 
@@ -437,23 +491,27 @@ export function vcoderPermissionDecision(toolName: string): { approved: boolean;
   return { approved: true };
 }
 
-function transcriptExists(home: VCoderRuntimeHome, sessionId: string): boolean {
-  // Best-effort: the runtime stores <sessionDir>/transcript.jsonl under
-  // VCODER_HOME; the exact layout is internal, so search shallowly.
-  try {
-    return findFile(home.vcoderHome, sessionId, 4);
-  } catch { return false; }
-}
-
-function findFile(dir: string, sessionId: string, depth: number): boolean {
-  if (depth < 0) return false;
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const child = join(dir, entry.name);
-    if (entry.name === sessionId && existsSync(join(child, "transcript.jsonl"))) return true;
-    if (findFile(child, sessionId, depth - 1)) return true;
-  }
-  return false;
+// Newest generation of this conversation's session that has a transcript on
+// disk, or null. The runtime stores transcripts as
+// projects/<workspace-slug>/<sessionId>.jsonl (agent-core session/storage.ts).
+// Missing that layout made every session look new after a host restart, so
+// the full Grok Bot history was re-sent on top of the transcript the runtime
+// reloaded anyway, overflowing the model's input limit.
+export function latestTranscriptGeneration(home: { readonly vcoderHome: string }, conversationId: string): number | null {
+  const pattern = new RegExp(`^${sessionIdForConversation(conversationId, 0).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:-g(\\d+))?\\.jsonl$`);
+  let latest: number | null = null;
+  const visit = (dir: string, depth: number) => {
+    if (depth < 0) return;
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (entry.isDirectory()) { visit(join(dir, entry.name), depth - 1); continue; }
+      const match = entry.isFile() ? pattern.exec(entry.name) : null;
+      if (match != null) latest = Math.max(latest ?? 0, Number(match[1] ?? 0));
+    }
+  };
+  visit(join(home.vcoderHome, "projects"), 1);
+  return latest;
 }
 
 async function runtimeHasSession(runtime: VcoderCoreRuntimeImplType, sessionId: string): Promise<boolean> {

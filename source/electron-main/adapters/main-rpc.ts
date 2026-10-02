@@ -91,6 +91,7 @@ export function createElectronProductionMainRpcBinding(
           }
           return settings as Record<string, unknown>;
         },
+        readVCoderStatusFromBox: async () => await context.coordinatorLegs.legs.getVCoderStatus!(),
         emitEgressTunnelChanged: (enabled) => context.requireMainEdge().emit("egress-tunnel-changed", enabled),
         emitWebauthnProxyChanged: (enabled) => context.requireMainEdge().emit("webauthn-proxy-changed", enabled),
         getTrustedContents: () => {

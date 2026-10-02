@@ -11,7 +11,7 @@
 // startSession settings (trustRuntimeProviderOverrides), so nothing is
 // written into VCODER_HOME/settings.json any more.
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { RuntimeEvent } from "@vcoder/agent-core/runtime";
@@ -288,6 +288,7 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
     let sessionId: string;
     let content = prompt;
     let needsStart = true;
+    let mcpChanged = false;
     let record: ConversationSessionRecord | undefined;
     if (conversationId == null) {
       sessionId = randomUUID();
@@ -300,7 +301,7 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
         // on-disk generation (not always g0: that silently dropped whatever
         // happened in later generations); on divergence move past every
         // existing generation so stale history is never replayed.
-        const latest = latestTranscriptGeneration(home, conversationId);
+        const latest = latestTranscriptGeneration(await runtime.listPersistedSessionIds(sessionIdForConversation(conversationId, 0)), conversationId);
         const generation = diverged ? Math.max(latest ?? 0, Number(/-g(\d+)$/.exec(record!.sessionId)?.[1] ?? 0)) + 1 : latest ?? 0;
         sessionId = sessionIdForConversation(conversationId, generation);
         const hasTranscript = !diverged && latest != null;
@@ -309,10 +310,10 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
         conversationSessions.set(conversationId, record);
       } else {
         sessionId = record.sessionId;
-        // MCP server URLs are bound at startSession; if they changed (e.g. a
-        // new computer-use bridge) re-start the same session id, which keeps
-        // the transcript but re-registers tools.
-        needsStart = record.mcpKey !== mcpKey || !(await runtimeHasSession(runtime, sessionId));
+        // A changed MCP set (e.g. a new computer-use bridge) is swapped into
+        // the live session instead of restarting it.
+        needsStart = !runtime.hasSession(sessionId);
+        mcpChanged = !needsStart && record.mcpKey !== mcpKey;
         record.mcpKey = mcpKey;
       }
     }
@@ -379,6 +380,9 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
           options?.signal?.removeEventListener("abort", onAbort);
           clearInterval(heartbeat);
           noteVCoderTurnEnded(sessionId);
+          // The runtime emits context_detail only on demand; ask for it so
+          // the status line shows real context usage after every turn.
+          runtime.refreshContext(sessionId);
           logTiming(sessionId, "complete", startedAt, { reason: event.reason, delivered: deliveredMessages, usage: cumulativeUsage });
           if (event.reason === "cancelled" || event.reason === "error" || event.reason === "timeout" || event.reason === "blocking") {
             const failure = new Error(event.message ?? event.error?.message ?? `VCoder runtime session ended: ${event.reason}`);
@@ -389,7 +393,8 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
           if (event.reason === "max_turns_reached") {
             // Never stop silently: tell the user the turn hit the step limit.
             deliveredMessages += 1;
-            queue.push({ type: "message", text: `（已达到单轮步数上限，任务可能还没做完。回复"继续"我接着做。）` });
+            const steps = event.turnCount == null ? "" : `（${event.turnCount} 步）`;
+            queue.push({ type: "message", text: `（已达到单轮步数上限${steps}，任务可能还没做完。回复"继续"我接着做。）` });
           }
           const fallbackText = textSegments.map(segment => segment.trim()).filter(segment => segment.length > 0).join("\n\n");
           queue.finish();
@@ -429,7 +434,8 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
         });
         logTiming(sessionId, "session-ready", startedAt, { reused: false, seededWithHistory: content !== prompt });
       } else {
-        logTiming(sessionId, "session-ready", startedAt, { reused: true });
+        if (mcpChanged) await runtime.updateMcpServers(sessionId, mcpServers);
+        logTiming(sessionId, "session-ready", startedAt, { reused: true, mcpChanged });
       }
       noteVCoderTurnStarted(sessionId);
       if (record != null) acceptTurnFingerprints(record, options);
@@ -451,43 +457,30 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
 
 const TOOL_HEARTBEAT_MS = 15_000;
 
-// Reasoning effort for bot turns. Only DashScope honours it (via
-// output_config.effort; there "low" cut thinking ~60%, 2026-10-01); the
-// DeepSeek official endpoint already reasons briefly and is unaffected.
+// Reasoning effort for bot turns. Defaults to the endpoint's own behaviour
+// (DeepSeek's official endpoint already reasons briefly). "low" turns
+// DeepSeek reasoning off entirely (thinking: disabled) and cut DashScope
+// thinking ~60% (2026-10-01).
 // Override with SAND_VCODER_EFFORT=low|medium|high|max|auto.
 export function vcoderEffort(env: NodeJS.ProcessEnv = process.env): "low" | "medium" | "high" | "max" | "auto" {
   const value = env.SAND_VCODER_EFFORT?.trim().toLowerCase();
-  return value === "medium" || value === "high" || value === "max" || value === "auto" || value === "low" ? value : "low";
+  return value === "medium" || value === "high" || value === "max" || value === "auto" || value === "low" ? value : "auto";
 }
 
 const MESSAGING_TOOLS = new Set(["SendUserMessage", "Brief"]);
 
 export const BOT_DISALLOWED_TOOLS = ["SendMessage", "AskUserQuestion", "EnterPlanMode", "ExitPlanMode"] as const;
 
-// Newest generation of this conversation's session that has a transcript on
-// disk, or null. The runtime stores transcripts as
-// projects/<workspace-slug>/<sessionId>.jsonl (agent-core session/storage.ts).
-// Missing that layout made every session look new after a host restart, so
-// the full Grok Bot history was re-sent on top of the transcript the runtime
-// reloaded anyway, overflowing the model's input limit.
-export function latestTranscriptGeneration(home: { readonly vcoderHome: string }, conversationId: string): number | null {
-  const pattern = new RegExp(`^${sessionIdForConversation(conversationId, 0).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:-g(\\d+))?\\.jsonl$`);
+// Newest generation among this conversation's persisted session ids
+// (runtime.listPersistedSessionIds), or null. Without it every session
+// looked new after a host restart and the full Grok Bot history was re-sent
+// on top of the transcript the runtime reloads anyway.
+export function latestTranscriptGeneration(sessionIds: readonly string[], conversationId: string): number | null {
+  const pattern = new RegExp(`^${sessionIdForConversation(conversationId, 0).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:-g(\\d+))?$`);
   let latest: number | null = null;
-  const visit = (dir: string, depth: number) => {
-    if (depth < 0) return;
-    let entries;
-    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
-    for (const entry of entries) {
-      if (entry.isDirectory()) { visit(join(dir, entry.name), depth - 1); continue; }
-      const match = entry.isFile() ? pattern.exec(entry.name) : null;
-      if (match != null) latest = Math.max(latest ?? 0, Number(match[1] ?? 0));
-    }
-  };
-  visit(join(home.vcoderHome, "projects"), 1);
+  for (const id of sessionIds) {
+    const match = pattern.exec(id);
+    if (match != null) latest = Math.max(latest ?? 0, Number(match[1] ?? 0));
+  }
   return latest;
-}
-
-async function runtimeHasSession(runtime: VcoderCoreRuntimeImplType, sessionId: string): Promise<boolean> {
-  // resume() only succeeds for a session still held in memory.
-  try { await runtime.resume(sessionId); return true; } catch { return false; }
 }

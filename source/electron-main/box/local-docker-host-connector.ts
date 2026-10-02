@@ -28,14 +28,26 @@ export const LOCAL_DOCKER_SCHEMA_VERSION = "7";
 // CLI executor used to — so settings.json is still staged and mounted, just
 // without VCODER_BOX_CLI_ENV or the CLI binary path.
 const READY_TIMEOUT_MS = 180_000;
-// Aliyun Bailian Token Plan (VCoder's built-in "dashscope" provider, an
-// Anthropic Messages endpoint). Not the Voyah gateway: it corrupts images
-// inside tool_result blocks in its Anthropic→OpenAI conversion, which blinds
-// computer-use screenshots (verified 2026-09-30 with solid-colour probes).
+// DeepSeek's official Anthropic endpoint (VCoder's built-in "deepseek"
+// provider, credential DEEPSEEK_AUTH_TOKEN). Not the Voyah gateway: it
+// corrupts images inside tool_result blocks in its Anthropic→OpenAI
+// conversion, which blinds computer-use screenshots (verified 2026-09-30).
+// Not Aliyun Bailian Token Plan: on a ~50k-token prompt it was 2–3x slower
+// (24s vs 8s; ~135 vs ~235 tok/s and twice the reasoning, measured
+// 2026-10-01). deepseek-flash is the current official name.
 // Override with SAND_VCODER_PROVIDER / SAND_VCODER_MODEL.
-export const DEFAULT_BOX_VCODER_PROVIDER = "dashscope";
-export const DEFAULT_BOX_VCODER_MODEL = "deepseek-v4.1-flash";
+export const DEFAULT_BOX_VCODER_PROVIDER = "deepseek";
+export const DEFAULT_BOX_VCODER_MODEL = "deepseek-flash";
 const OPTIONAL_CREDENTIAL_TIMEOUT_MS = 3_000;
+
+export function vcoderContainerEnv(env: NodeJS.ProcessEnv = process.env): string[] {
+  return [
+    `SAND_VCODER_MODEL=${env.SAND_VCODER_MODEL?.trim() || DEFAULT_BOX_VCODER_MODEL}`,
+    `SAND_VCODER_PROVIDER=${env.SAND_VCODER_PROVIDER?.trim() || DEFAULT_BOX_VCODER_PROVIDER}`,
+    ...(env.SAND_VCODER_EFFORT?.trim() ? [`SAND_VCODER_EFFORT=${env.SAND_VCODER_EFFORT.trim()}`] : []),
+    ...(env.SAND_VCODER_CONTEXT_WINDOW?.trim() ? [`SAND_VCODER_CONTEXT_WINDOW=${env.SAND_VCODER_CONTEXT_WINDOW.trim()}`] : []),
+  ];
+}
 
 export interface LocalDockerStatus {
   readonly available: boolean;
@@ -103,7 +115,7 @@ async function gatewayReady(token: string): Promise<boolean> {
   } catch { return false; }
 }
 
-async function inspectContainer(): Promise<{ exists: boolean; running: boolean; owned: boolean; image: string; hostSha256: string; vcoderSettingsSha256: string; hasInferenceCredential: boolean; inferenceProvider: string; schemaVersion: string }> {
+async function inspectContainer(): Promise<{ exists: boolean; running: boolean; owned: boolean; image: string; hostSha256: string; vcoderSettingsSha256: string; vcoderEnv?: string; hasInferenceCredential: boolean; inferenceProvider: string; schemaVersion: string }> {
   const result = await runDocker(["inspect", "--format", "{{json .}}", LOCAL_DOCKER_BOX_CONTAINER]);
   if (!result.ok) return { exists: false, running: false, owned: false, image: "", hostSha256: "", vcoderSettingsSha256: "", hasInferenceCredential: false, inferenceProvider: "", schemaVersion: "" };
   try {
@@ -117,6 +129,7 @@ async function inspectContainer(): Promise<{ exists: boolean; running: boolean; 
       vcoderSettingsSha256: typeof value.Config?.Labels?.["com.grok-bot.local-vm.vcoder-settings-sha256"] === "string" ? value.Config.Labels["com.grok-bot.local-vm.vcoder-settings-sha256"] as string : "",
       hasInferenceCredential: value.Config?.Labels?.["com.grok-bot.local-vm.inference-credential"] === "1",
       inferenceProvider: typeof value.Config?.Labels?.["com.grok-bot.local-vm.inference-provider"] === "string" ? value.Config.Labels["com.grok-bot.local-vm.inference-provider"] as string : "",
+      vcoderEnv: typeof value.Config?.Labels?.["com.grok-bot.local-vm.vcoder-env"] === "string" ? value.Config.Labels["com.grok-bot.local-vm.vcoder-env"] as string : "",
       schemaVersion: typeof value.Config?.Labels?.["com.grok-bot.local-vm.schema-version"] === "string" ? value.Config.Labels["com.grok-bot.local-vm.schema-version"] as string : "",
     };
   } catch { throw new Error("Docker returned malformed container inspection data."); }
@@ -222,8 +235,14 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
   if (inspected.exists && !inspected.owned) throw new Error(`Local Docker VM cannot use ${LOCAL_DOCKER_BOX_CONTAINER}: an unowned container already has that name.`);
   const isLegacyImage = inspected.exists && LEGACY_LOCAL_DOCKER_BOX_IMAGES.has(inspected.image);
   if (inspected.exists && !isLegacyImage && inspected.image !== LOCAL_DOCKER_BOX_IMAGE) throw new Error(`Local Docker VM container uses unexpected image ${inspected.image}. Remove it explicitly before changing images.`);
-  const isStale = (state: { schemaVersion: string; hostSha256: string; vcoderSettingsSha256: string; hasInferenceCredential: boolean; inferenceProvider: string }): boolean =>
+  // Container env is fixed at `docker run`, so a changed provider/model/
+  // effort/window must recreate it (previously only a host-bundle change did,
+  // and switching SAND_VCODER_PROVIDER silently kept the old provider).
+  const vcoderEnv = vcoderContainerEnv();
+  const vcoderEnvKey = createHash("sha256").update(vcoderEnv.join("\n")).digest("hex").slice(0, 16);
+  const isStale = (state: { schemaVersion: string; hostSha256: string; vcoderSettingsSha256: string; vcoderEnv?: string; hasInferenceCredential: boolean; inferenceProvider: string }): boolean =>
     isLegacyImage
+    || state.vcoderEnv !== vcoderEnvKey
     || state.schemaVersion !== LOCAL_DOCKER_SCHEMA_VERSION
     || state.hostSha256 !== hostBundle.sha256
     || state.vcoderSettingsSha256 !== (vcoder?.sha256 ?? "")
@@ -248,6 +267,7 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
       "--label", `com.grok-bot.local-vm.inference-credential=${inferenceCredential == null ? "0" : "1"}`,
       "--label", `com.grok-bot.local-vm.inference-provider=${inferenceProvider}`,
       "--label", `com.grok-bot.local-vm.schema-version=${LOCAL_DOCKER_SCHEMA_VERSION}`,
+      "--label", `com.grok-bot.local-vm.vcoder-env=${vcoderEnvKey}`,
       "--platform", "linux/amd64", "--restart", "unless-stopped",
       // The Claude Agent SDK writes its debug stream to ~/.claude/debug when no
       // CLAUDE_CODE_DEBUG_LOGS_DIR is set. With the read-only ~/.claude bind
@@ -259,14 +279,11 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
       // debug-log code path.
       "--env", "SAND_SUPERVISOR_ENABLED=1", "--env", "SAND_BOX_AUTO_UPDATE=0", "--env", "SAND_USE_EXISTING_BOX_EXEC_DAEMON=1", "--env", "SAND_TREE_SITTER_NODE_DEPS=/home/box/deps", "--env", "NODE_PATH=/home/box/deps", "--env", "SAND_GATEWAY_BIND_HOST=0.0.0.0", "--env", "SAND_HOST_PORT=1340", "--env", "CLAUDE_CODE_DEBUG_LOGS_DIR=/tmp/claude-debug-logs", "--env", `SAND_GATEWAY_TOKEN=${token}`,
       "--env", `SAND_INFERENCE_PROVIDER=${inferenceProvider}`,
-      // The embedded VcoderCoreRuntimeImpl gets its own VCODER_HOME (rendered
-      // by vcoder-runtime-bridge.ts, not this settings.json) for provider/model
-      // selection; this mount only supplies the credential env block that
-      // renderVCoderRuntimeSettings() copies over via readVCoderSettingsEnv().
-      "--env", `SAND_VCODER_MODEL=${process.env.SAND_VCODER_MODEL?.trim() || DEFAULT_BOX_VCODER_MODEL}`,
-      "--env", `SAND_VCODER_PROVIDER=${process.env.SAND_VCODER_PROVIDER?.trim() || DEFAULT_BOX_VCODER_PROVIDER}`,
-      ...(process.env.SAND_VCODER_EFFORT?.trim() ? ["--env", `SAND_VCODER_EFFORT=${process.env.SAND_VCODER_EFFORT.trim()}`] : []),
-      ...(process.env.SAND_VCODER_CONTEXT_WINDOW?.trim() ? ["--env", `SAND_VCODER_CONTEXT_WINDOW=${process.env.SAND_VCODER_CONTEXT_WINDOW.trim()}`] : []),
+      // The embedded VcoderCoreRuntimeImpl takes provider/model from these
+      // env vars (passed to startSession by vcoder-runtime-bridge.ts); this
+      // mount only supplies the credential env block it reads via
+      // readVCoderSettingsEnv().
+      ...vcoderEnv.flatMap(entry => ["--env", entry]),
       ...(inferenceCredential == null ? [] : ["--env", "SAND_DEV_INFERENCE_TOKEN_FILE=/run/grok-bot/inference.json", "--env", `SAND_BACKEND_URL=${inferenceCredential.backendUrl}`]),
       "--publish", "127.0.0.1:1337:1337", "--publish", "127.0.0.1:1339:1339", "--publish", "127.0.0.1:1340:1340",
       "--publish", "127.0.0.1:6080:6080", "--publish", "127.0.0.1:6081:6081", "--publish", "127.0.0.1:8790:8790",

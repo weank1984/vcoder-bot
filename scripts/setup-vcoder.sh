@@ -1,6 +1,6 @@
 #!/bin/bash
 # Fetches and builds the VCoder packages this repo links to via
-# package.json ("@vcoder/*": "file:../VCoder/packages/*") at the commit pinned
+# package.json ("@vcoder/*": "file:../vcoder-bot-core/packages/*") at the commit pinned
 # in vcoder.lock. Run before `npm ci`. Idempotent.
 #
 #   scripts/setup-vcoder.sh            # check out the pinned commit and build
@@ -8,7 +8,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LOCK="$ROOT/vcoder.lock"
-VCODER_DIR="${VCODER_DIR:-$ROOT/../VCoder}"
+VCODER_DIR="${VCODER_DIR:-$ROOT/../vcoder-bot-core}"
 # shellcheck disable=SC1090
 source "$LOCK"
 
@@ -21,9 +21,9 @@ if [ "${1:-}" = "--pin" ]; then
   echo "Pinned VCoder $commit in vcoder.lock"; exit 0
 fi
 
-if [ ! -d "$VCODER_DIR/.git" ]; then
+if [ ! -e "$VCODER_DIR/.git" ]; then
   echo "Cloning $VCODER_REPO into $VCODER_DIR"
-  git clone "$VCODER_REPO" "$VCODER_DIR"
+  git clone --branch "$VCODER_BRANCH" "$VCODER_REPO" "$VCODER_DIR"
 fi
 if [ "$(git -C "$VCODER_DIR" rev-parse HEAD)" != "$VCODER_COMMIT" ]; then
   if [ -n "$(git -C "$VCODER_DIR" status --porcelain --untracked-files=no)" ]; then
@@ -37,7 +37,7 @@ echo "VCoder at $VCODER_COMMIT"
 cd "$VCODER_DIR"
 command -v pnpm >/dev/null || { echo "pnpm is required (corepack enable)." >&2; exit 1; }
 pnpm install --frozen-lockfile --filter "@vcoder/shared..." --filter "@vcoder/agent-core..." --filter "@vcoder/server..."
-pnpm -C packages/shared build
 pnpm -C packages/agent-core build
+pnpm -C packages/shared build
 pnpm -C packages/server build
 echo "VCoder packages built: $VCODER_DIR/packages/{shared,agent-core,server}/dist"

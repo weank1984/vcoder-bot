@@ -29,20 +29,9 @@ async function loadModule() {
   }
 }
 
-test("vcoder permission policy allows in-box tool use", async () => {
-  const { vcoderPermissionDecision } = await loadModule();
-  for (const tool of ["Bash", "Write", "Edit", "NotebookEdit", "WebFetch", "SendUserMessage", "Brief", "mcp__sand_computer__computer"]) {
-    assert.deepEqual(vcoderPermissionDecision(tool), { approved: true }, tool);
-  }
-});
-
-test("vcoder permission policy denies interactive-UI tools with guidance", async () => {
-  const { vcoderPermissionDecision } = await loadModule();
-  for (const tool of ["AskUserQuestion", "EnterPlanMode", "ExitPlanMode"]) {
-    const decision = vcoderPermissionDecision(tool);
-    assert.equal(decision.approved, false, tool);
-    assert.match(decision.reason, /SendUserMessage/);
-  }
+test("bot sessions hide tools the chat cannot serve", async () => {
+  const { BOT_DISALLOWED_TOOLS } = await loadModule();
+  assert.deepEqual([...BOT_DISALLOWED_TOOLS].sort(), ["AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "SendMessage"]);
 });
 
 test("reattaches the newest on-disk session generation after a host restart", async () => {

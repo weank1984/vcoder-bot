@@ -111,14 +111,14 @@ Router 页面还有一个 **Use local Docker VM** 开关。启用后，Grok Bot 
 
 ## 快速开始
 
-本仓库通过 `package.json` 中的 `"@vcoder/*": "file:../VCoder/packages/*"` 链接同级目录下的 [VCoder](https://github.com/weank1984/VCoder)，使用的版本固定在 `vcoder.lock`。
+本仓库通过 `package.json` 中的 `"@vcoder/*": "file:../vcoder-bot-core/packages/*"` 链接同级目录下 [VCoder](https://github.com/weank1984/VCoder) 的 `vcoder-bot` 分支（bot 专用，不影响本机的 VCoder CLI），使用的版本固定在 `vcoder.lock`。
 
 ```sh
 git clone https://github.com/weank1984/vcoder-bot.git
 cd vcoder-bot
 git lfs install
 git lfs pull
-scripts/setup-vcoder.sh     # 克隆 ../VCoder，切到 vcoder.lock 固定的提交并构建
+scripts/setup-vcoder.sh     # 克隆 ../vcoder-bot-core（vcoder-bot 分支），切到 vcoder.lock 固定的提交并构建
 npm ci
 npm run bootstrap
 npm run check

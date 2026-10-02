@@ -9,7 +9,7 @@
 set -e
 APP="/Applications/Grok Bot 0.18 Reconstructed.app"
 
-export SAND_VCODER_PROVIDER="${SAND_VCODER_PROVIDER:-dashscope}"
-export SAND_VCODER_MODEL="${SAND_VCODER_MODEL:-deepseek-v4.1-flash}"
+export SAND_VCODER_PROVIDER="${SAND_VCODER_PROVIDER:-deepseek}"
+export SAND_VCODER_MODEL="${SAND_VCODER_MODEL:-deepseek-flash}"
 export SAND_ROUTER_BYPASS_LOGIN=1
 exec "$APP/Contents/MacOS/Grok Bot"

@@ -6,14 +6,10 @@
 // removes the per-turn subprocess cold start, and shrinks the crash blast
 // radius to a single sendMessage() call instead of an entire CLI process.
 //
-// Provider selection is deliberately NOT passed via startSession's runtime
-// settings: @vcoder/agent-core's default provider-resolution policy
-// (SERVER_PROVIDER_RESOLUTION_POLICY, allowCustomProviders:false) only trusts
-// the userSettings layer (VCODER_HOME/settings.json) for `provider`/
-// `providers` selection and silently ignores the same fields when supplied as
-// runtime overrides — confirmed empirically (see the project memory) before
-// writing this file. So provider/model selection is rendered into a
-// VCODER_HOME-scoped settings.json once per host process instead.
+// Runs against the bot-only VCoder branch (vcoder.lock), whose runtime
+// accepts provider/model/credentials and appendSystemPrompt directly via
+// startSession settings (trustRuntimeProviderOverrides), so nothing is
+// written into VCODER_HOME/settings.json any more.
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -62,40 +58,26 @@ function resolveVCoderRuntimeHome(): VCoderRuntimeHome {
   return { vcoderHome, workingDirectory };
 }
 
-// Renders the model/provider/credential selection into the userSettings layer
-// (VCODER_HOME/settings.json) that @vcoder/agent-core's resolveSettings()
-// actually trusts for provider selection (see file header). Desktop-side
-// ~/.vcoder/settings.json already holds this in the non-box topology; the box
-// topology has no such file, so this always writes one, scoped to
-// SAND_VCODER_RUNTIME_HOME so it never touches a real user's ~/.vcoder.
-function renderVCoderRuntimeSettings(home: VCoderRuntimeHome, options: { readonly provider?: string; readonly model?: string; readonly contextWindow?: number; readonly env: Record<string, string>; readonly outputStyle?: { readonly name: string; readonly prompt: string } }): void {
+// Earlier builds rendered provider/model/env/outputStyle into
+// VCODER_HOME/settings.json. That file still wins as the userSettings layer
+// (and its outputStyle would duplicate the bot prompt), so strip those keys.
+function removeLegacyRuntimeSettings(home: VCoderRuntimeHome): void {
   mkdirSync(home.vcoderHome, { recursive: true });
   const settingsPath = join(home.vcoderHome, "settings.json");
-  let existing: Record<string, unknown> = {};
-  try { existing = JSON.parse(readFileSync(settingsPath, "utf8")) as Record<string, unknown>; } catch { existing = {}; }
-  // A trusted userSettings `providers.<builtinId>` entry merges onto the
-  // builtin definition, so this caps the declared window (e.g. 1M for
-  // deepseek) that would otherwise win over VCODER_MAX_CONTEXT_TOKENS in
-  // context_detail.
-  const existingProviders = typeof existing.providers === "object" && existing.providers != null ? existing.providers as Record<string, Record<string, unknown>> : {};
-  const providers = options.provider == null || options.contextWindow == null ? existingProviders : {
-    ...existingProviders,
-    [options.provider]: {
-      ...existingProviders[options.provider],
-      contextWindow: options.contextWindow,
-      ...(options.model == null ? {} : { contextWindows: { ...(existingProviders[options.provider]?.contextWindows as Record<string, number> | undefined), [options.model]: options.contextWindow } }),
-    },
-  };
-  const merged = {
-    ...existing,
-    ...(Object.keys(providers).length === 0 ? {} : { providers }),
-    ...(options.provider == null ? {} : { provider: options.provider }),
-    ...(options.model == null ? {} : { model: options.model }),
-    ...(options.outputStyle == null ? {} : { outputStyle: options.outputStyle }),
-    env: { ...(typeof existing.env === "object" && existing.env != null ? existing.env as Record<string, string> : {}), ...options.env },
-  };
-  writeFileSync(settingsPath, JSON.stringify(merged, null, 2));
+  let existing: Record<string, unknown>;
+  try { existing = JSON.parse(readFileSync(settingsPath, "utf8")) as Record<string, unknown>; } catch { return; }
+  const { provider: _provider, model: _model, providers: _providers, outputStyle: _outputStyle, env: _env, ...rest } = existing;
+  if (Object.keys(rest).length !== Object.keys(existing).length) writeFileSync(settingsPath, JSON.stringify(rest, null, 2));
 }
+
+interface VCoderSessionBaseSettings {
+  readonly provider?: string;
+  readonly model?: string;
+  readonly providers?: Record<string, Record<string, unknown>>;
+  readonly env: Record<string, string>;
+}
+
+let sessionBaseSettings: VCoderSessionBaseSettings | null = null;
 
 let runtimeSingleton: Promise<VcoderCoreRuntimeImplType> | null = null;
 
@@ -113,19 +95,26 @@ function getVCoderRuntime(): Promise<VcoderCoreRuntimeImplType> {
     const { readVCoderSettingsEnv } = await import("../../../shared/node/inference-router-local.js");
     const provider = process.env.SAND_VCODER_PROVIDER?.trim();
     const model = process.env.SAND_VCODER_MODEL?.trim();
-    // Models degrade well before their declared window (deepseek-v4.1-flash
+    // Models degrade well before their declared window (DeepSeek flash
     // declares 1M but gets slow and sloppy past ~300k), so cap the window
     // the runtime uses for context_detail and the auto-compact threshold.
     const contextWindow = effectiveVCoderContextWindow();
     process.env.VCODER_MAX_CONTEXT_TOKENS ??= String(contextWindow);
-    renderVCoderRuntimeSettings(home, { ...(provider == null || provider.length === 0 ? {} : { provider }), ...(model == null || model.length === 0 ? {} : { model }), contextWindow, env: readVCoderSettingsEnv(), outputStyle: { name: "Grok Bot chat", prompt: GROK_BOT_OUTPUT_STYLE } });
+    removeLegacyRuntimeSettings(home);
+    // A `providers.<builtinId>` entry merges onto the builtin definition, so
+    // this caps the declared window (e.g. 1M for deepseek).
+    sessionBaseSettings = {
+      ...(provider == null || provider.length === 0 ? {} : { provider, providers: { [provider]: { contextWindow, ...(model == null || model.length === 0 ? {} : { contextWindows: { [model]: contextWindow } }) } } }),
+      ...(model == null || model.length === 0 ? {} : { model }),
+      env: readVCoderSettingsEnv(),
+    };
     // VCODER_HOME must be set in this process's env before constructing the
     // runtime: @vcoder/agent-core's getVcoderHome() reads process.env at call
     // time (not just at import time), and every session start re-resolves
     // settings from it.
     process.env.VCODER_HOME = home.vcoderHome;
     const { VcoderCoreRuntimeImpl } = await import("@vcoder/server/runtime");
-    const runtime = new VcoderCoreRuntimeImpl(home.workingDirectory);
+    const runtime = new VcoderCoreRuntimeImpl(home.workingDirectory, undefined, { trustRuntimeProviderOverrides: true });
     // Background shells/subagents outlive the turn that started them, so
     // they are tracked from a runtime-wide subscription, not the per-turn one.
     const { recordVCoderBackgroundEvent } = await import("./vcoder-background-tasks.js");
@@ -188,8 +177,8 @@ function toolResultPreview(content: string | Array<{ type: string; text?: string
 
 export interface VCoderRuntimeTurnOptions {
   // Extra per-turn instructions (e.g. computer-use availability). Prepended
-  // to the user content because the runtime has no per-session system prompt
-  // hook (see GROK_BOT_OUTPUT_STYLE).
+  // to the user content: it changes every turn, and putting it in the system
+  // prompt would defeat prompt caching.
   readonly systemPromptAddendum?: string;
   readonly maxTurns?: number;
   readonly mcpServers?: readonly { readonly type: "http"; readonly name?: string; readonly url: string }[];
@@ -246,19 +235,13 @@ function logTiming(sessionId: string, stage: string, startedAt: number, extra?: 
 }
 
 // How the model should talk to the user (design A: Grok Bot's SendMessage
-// model). NOTE: StartSessionParams.settings.appendSystemPrompt is declared by
-// @vcoder/agent-core but never read by VcoderCoreRuntimeImpl — text passed
-// there never reached the model (verified: the model quoted only the stock
-// SendUserMessage description when asked). The working system-prompt hook is
-// the userSettings `outputStyle` {name, prompt}, which
-// readCliParitySystemPromptOptions feeds into buildCliParitySystemPrompt
-// (vcoder-core.ts ~1246 / ~2495), so it is rendered into VCODER_HOME/settings.json.
+// model). Passed as RuntimeSettings.appendSystemPrompt.
 const GROK_BOT_OUTPUT_STYLE = [
   "You are Grok Bot, a warm, concise assistant running in a chat app. The user only sees messages you send with the SendUserMessage tool; plain assistant text is NOT shown to them.",
   "Each SendUserMessage call is delivered immediately as its own chat message. Always deliver your answer with SendUserMessage — never finish a turn having only written plain text.",
   "For work that takes more than one or two tool calls: first send a one-line acknowledgement of what you are about to do, send a short progress update at meaningful milestones (not after every tool call), then send the result. For a quick question, send one message with the answer. Once the result is sent, end your turn — do not send a closing or \"anything else?\" message.",
   "Your tool calls are approved automatically: the user never sees approval cards, permission prompts or dialogs, and cannot approve anything. Never tell the user a card will appear or ask them to approve a tool. If a tool refuses or blocks a call, say plainly what it returned and what you did instead; do not invent a cause or a next step that did not happen.",
-  "Format messages in Markdown. Do not use the built-in SendMessage tool at all: it cannot reach the user, and it cannot reach the user's other bots either (use the sand_agents SendToAgent tool for those when available).",
+  "Format messages in Markdown. To reach the user's other bots, use the sand_agents SendToAgent tool when available.",
   "",
   "## Working as a team",
   "You are one of several bots this user runs; each has its own chat, persona and memory. Your identity, your teammates' ids and the groups you are in are given to you in a system reminder each turn.",
@@ -413,18 +396,11 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
           resultDeferred.resolve({ text: fallbackText, deliveredMessages, usage: cumulativeUsage });
           return;
         }
-        case "permission_request": {
-          // permissionMode "default" (not "dontAsk", which silently denies
-          // everything that needs approval, including the messaging tools)
-          // makes the broker ask here. Nobody can click "approve" inside the
-          // box, so decide automatically: the box container is the isolation
-          // boundary (same as the original Grok Bot box shell), so tool use
-          // inside it is allowed. Previously only the messaging tools were
-          // approved, which silently denied every write/mutating Bash call
-          // ("Permission denied") and left the agent unable to do real work.
-          runtime.resolvePermission(sessionId, event.request.id, vcoderPermissionDecision(event.request.toolName));
+        case "permission_request":
+          // bypassPermissions should never ask; nobody could answer inside
+          // the box anyway, and the container is the isolation boundary.
+          runtime.resolvePermission(sessionId, event.request.id, { approved: true });
           return;
-        }
         default:
           return;
       }
@@ -436,7 +412,14 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
           sessionId,
           workingDirectory: home.workingDirectory,
           settings: {
-            permissionMode: "default",
+            ...sessionBaseSettings,
+            // The box container is the isolation boundary (same as the
+            // original Grok Bot box shell); nobody can approve inside it.
+            permissionMode: "bypassPermissions",
+            // No surface for these in the chat: SendMessage only reaches
+            // in-process teammates, the others need interactive UI.
+            disallowedTools: [...BOT_DISALLOWED_TOOLS],
+            appendSystemPrompt: GROK_BOT_OUTPUT_STYLE,
             effort: vcoderEffort(),
             // No default turn cap (CLI interactive parity): a cap cut long
             // tasks mid-way. Callers may still pass one explicitly.
@@ -468,28 +451,18 @@ export function runVCoderRuntimeTurn(prompt: string, options?: VCoderRuntimeTurn
 
 const TOOL_HEARTBEAT_MS = 15_000;
 
-// Reasoning effort for bot turns. deepseek-v4.1-flash reasons 30–80s before
-// every tool call at the endpoint default, which looks like a hang in chat;
-// "low" cut thinking ~60% in a direct DashScope comparison (2026-10-01).
+// Reasoning effort for bot turns. Only DashScope honours it (via
+// output_config.effort; there "low" cut thinking ~60%, 2026-10-01); the
+// DeepSeek official endpoint already reasons briefly and is unaffected.
 // Override with SAND_VCODER_EFFORT=low|medium|high|max|auto.
 export function vcoderEffort(env: NodeJS.ProcessEnv = process.env): "low" | "medium" | "high" | "max" | "auto" {
   const value = env.SAND_VCODER_EFFORT?.trim().toLowerCase();
   return value === "medium" || value === "high" || value === "max" || value === "auto" || value === "low" ? value : "low";
 }
 
-const MESSAGING_TOOLS = new Set(["SendUserMessage", "Brief", "SendMessage"]);
+const MESSAGING_TOOLS = new Set(["SendUserMessage", "Brief"]);
 
-// Tools whose "approval" is really an interactive UI round-trip with the user
-// (answer a question, accept a plan). The Grok Bot chat has no surface for
-// them, so they are denied with guidance instead of being auto-accepted with
-// no answer.
-const INTERACTIVE_TOOLS = new Set(["AskUserQuestion", "EnterPlanMode", "ExitPlanMode"]);
-const INTERACTIVE_TOOL_DENIAL = "This chat has no interactive question/plan UI. Ask the user with SendUserMessage instead, then end your turn and wait for their reply.";
-
-export function vcoderPermissionDecision(toolName: string): { approved: boolean; reason?: string } {
-  if (INTERACTIVE_TOOLS.has(toolName)) return { approved: false, reason: INTERACTIVE_TOOL_DENIAL };
-  return { approved: true };
-}
+export const BOT_DISALLOWED_TOOLS = ["SendMessage", "AskUserQuestion", "EnterPlanMode", "ExitPlanMode"] as const;
 
 // Newest generation of this conversation's session that has a transcript on
 // disk, or null. The runtime stores transcripts as
